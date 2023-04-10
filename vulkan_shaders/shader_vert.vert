@@ -1,11 +1,11 @@
 #version 450
 
-vec2 positions[3] = vec2[](
-    vec2(0.0, -0.5),
-    vec2(0.5, 0.5),
-    vec2(-0.5, 0.5)
-);
+in layout(location = 0)vec3 pos;
+in layout(location = 1)vec3 col;
+out layout(location = 0)vec3 vertcol;
 
 void main() {
-    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    vec3 outpos = vec3(pos[0]/pos[2],pos[1]/pos[2],0.5);
+    gl_Position = vec4(outpos, 1.0);
+    vertcol = col;
 }
