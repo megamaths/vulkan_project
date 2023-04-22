@@ -4,6 +4,118 @@
 
 layout (binding = 0, rgba8) uniform writeonly image2D outputImage;
 
+layout(binding = 1) uniform vecTwo{
+    vec2 xy;
+} screenExtent;
+
+
+struct ray{
+    vec3 dir;
+    vec3 start;
+    vec3 colour;
+    float energy;
+};
+
+float intersectSphere(ray testRay, vec3 spherecenter, float radius){
+
+	vec3 L = spherecenter - testRay.start;
+	float tc = dot(L, testRay.dir);
+	if ( tc < 0.0 ) return 65536;
+	
+	float d2 = abs((tc*tc) - (dot(L,L)));
+	if ( d2 > radius*radius) return 65536;
+	
+	float t1c = sqrt( (radius * radius) - (d2) );
+	
+	float t1 = tc - t1c;
+	float t2 = tc + t1c;
+
+	if ( t1 < 0.0) return t2;
+    return t1;
+}
+
+vec3 normalSphere(ray testRay ,float d, vec3 center){
+    return normalize(testRay.start+testRay.dir*d-center);
+}
+
+int seed = 0;
+
+void setSeed(int x, int y){
+    seed = x*1000+y;
+    seed = (seed ^ 61) ^ (seed >> 16);
+    seed *= 9;
+    seed = seed ^ (seed >> 4);
+    seed *= 0x27d4eb2d;
+    seed = seed ^ (seed >> 15);
+}
+
+int randVal(){
+    
+    seed ^= (seed << 13);
+    seed ^= (seed >> 17);
+    seed ^= (seed << 5);
+    return seed;
+}
+
+ray traceRay(ray mainRay){
+
+    ray retRay;
+    retRay.colour = mainRay.colour;
+    retRay.energy = 0;
+
+
+    vec3 normal = vec3(0,0,0);
+    float dist = 65536;
+
+    vec3 newCol = vec3(0);
+
+    vec3 spos = vec3(0,0,4);
+    float newdist = intersectSphere(mainRay, spos, 0.5);
+    if (newdist < dist){
+        normal = normalSphere(mainRay,newdist,spos);
+        newCol = vec3(0,0,1);
+    }
+    dist = min(dist,newdist);
+
+    spos = vec3(1,2,5);
+    newdist = intersectSphere(mainRay, spos, 2.5);
+    if (newdist < dist){
+        normal = normalSphere(mainRay,newdist,spos);
+        newCol = vec3(1,0,0);
+    }
+    dist = min(dist,newdist);
+
+    spos = vec3(-4,-4,20);
+    newdist = intersectSphere(mainRay, spos, 5.5);
+    if (newdist < dist){
+        normal = normalSphere(mainRay,newdist,spos);
+        newCol = vec3(2,2,0);
+    }
+    dist = min(dist,newdist);
+
+
+    if (dist > 65535){
+        retRay.energy = 0;
+        return retRay;// ?? as energy is 0 should not try to reflect of the void
+    }
+
+
+    // if hit
+    vec3 reflectRay = reflect(mainRay.dir,normal);
+    vec3 randDir = vec3(randVal()%256/128.0-1.0,randVal()%256/128.0-1.0,randVal()%256/128.0-1.0)*0.25;
+
+
+
+    retRay.dir = normalize(reflectRay + randDir);
+    retRay.start = mainRay.start + mainRay.dir * dist  +  retRay.dir *0.01;// not sure if last bit is nesisary it should prevent coliding with same object 2ce
+
+
+    retRay.colour = mainRay.colour + (0.2*mainRay.energy)*newCol;
+    retRay.energy = mainRay.energy * 0.8;
+
+
+    return retRay;
+}
 
 // work group max size on this computer is 1024 
 layout (local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
@@ -13,6 +125,26 @@ void main(){
     ivec2 xy_int = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(outputImage);
     vec2 xy_float = vec2(gl_GlobalInvocationID.x / float(size.x), gl_GlobalInvocationID.y / float(size.y));
-    
-    imageStore(outputImage, xy_int, vec4(xy_float.xy, 0.0f , 1.0f));
+    setSeed(xy_int.x,xy_int.y);
+
+
+    ray mainray;
+    mainray.start = vec3(0,0,0);
+    mainray.dir = normalize(vec3((xy_float+vec2(-0.5,-0.5))*screenExtent.xy,1.0));
+    mainray.colour = vec3(0.0);
+    mainray.energy = 1;
+
+    vec3 colour = vec3(0);
+
+    for (int i = 0; i < 30; i++){
+
+        mainray = traceRay(mainray);
+        if (mainray.energy < 0.1){
+            break;
+        }
+        
+    }
+    colour = mainray.colour;
+    //imageStore(outputImage, xy_int, vec4(vec3(1-dist) , 1.0f));
+    imageStore(outputImage, xy_int, vec4(colour , 1.0f));
 }

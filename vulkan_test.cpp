@@ -80,10 +80,6 @@ std::vector<VkBuffer> uniformBuffers;
 std::vector<VkDeviceMemory> uniformBuffersMemory;
 std::vector<void*> uniformBuffersMapped;
 
-std::vector<VkBuffer> uniformBuffersv2;
-std::vector<VkDeviceMemory> uniformBuffersMemoryv2;
-std::vector<void*> uniformBuffersMappedv2;
-
 VkDescriptorPool descriptorPool;
 std::vector<VkDescriptorSet> descriptorSets;
 
@@ -329,7 +325,7 @@ void initWindow(){
     //glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); // due to being able to recreate the swap chain is not needed
 
 
-    window = glfwCreateWindow(800, 600, "Vulkan window", nullptr, nullptr);
+    window = glfwCreateWindow(800, 608, "Vulkan window", nullptr, nullptr);
     glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 }
 
@@ -1319,12 +1315,19 @@ void createComputeImage(){
 }
 
 void createComputeDescriptorSetLayout(){
-    std::array<VkDescriptorSetLayoutBinding,1> layouts;
+    std::array<VkDescriptorSetLayoutBinding,2> layouts;
     layouts[0].binding = 0;
     layouts[0].descriptorCount = 1;
     layouts[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     layouts[0].pImmutableSamplers = nullptr;
     layouts[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+
+    layouts[1].binding = 1;
+    layouts[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    layouts[1].descriptorCount = 1;
+    layouts[1].pImmutableSamplers = nullptr;
+    layouts[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1351,12 +1354,17 @@ void createComputeDescriptorSets(){
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 
-        std::array<VkWriteDescriptorSet, 1> descriptorWrites{};
+        std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
 
         VkDescriptorImageInfo imageInfo{};
         imageInfo.sampler = imageSampler;
         imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;//?? validator said this is only allowed format
         imageInfo.imageView = computeOutImageView;
+
+        VkDescriptorBufferInfo bufferInfov2{};
+        bufferInfov2.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*2 +i];
+        bufferInfov2.offset = 0;
+        bufferInfov2.range = sizeof(vecTwo);
 
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = computeDescriptorSets[i];
@@ -1366,7 +1374,15 @@ void createComputeDescriptorSets(){
         descriptorWrites[0].descriptorCount = 1;
         descriptorWrites[0].pImageInfo = &imageInfo;
 
-        vkUpdateDescriptorSets(logicalDevice, 1, descriptorWrites.data(), 0, nullptr);
+        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[1].dstSet = computeDescriptorSets[i];
+        descriptorWrites[1].dstBinding = 1;
+        descriptorWrites[1].dstArrayElement = 0;
+        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[1].descriptorCount = 1;
+        descriptorWrites[1].pBufferInfo = &bufferInfov2;
+
+        vkUpdateDescriptorSets(logicalDevice, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
 }
 
@@ -1502,9 +1518,11 @@ void createIndexBuffer(){
 void createUniformBuffers(){
     VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
-    uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-    uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
-    uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+    int numUbos = 3;
+
+    uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT *numUbos);
+    uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT *numUbos);
+    uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT *numUbos);
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
@@ -1514,14 +1532,10 @@ void createUniformBuffers(){
 
     bufferSize = sizeof(vecTwo);
 
-    uniformBuffersv2.resize(MAX_FRAMES_IN_FLIGHT);
-    uniformBuffersMemoryv2.resize(MAX_FRAMES_IN_FLIGHT);
-    uniformBuffersMappedv2.resize(MAX_FRAMES_IN_FLIGHT);
+    for (size_t i = MAX_FRAMES_IN_FLIGHT; i < MAX_FRAMES_IN_FLIGHT*numUbos; i++) {
+        createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
 
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffersv2[i], uniformBuffersMemoryv2[i]);
-
-        vkMapMemory(logicalDevice, uniformBuffersMemoryv2[i], 0, bufferSize, 0, &uniformBuffersMappedv2[i]);
+        vkMapMemory(logicalDevice, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
     }
 
 
@@ -1530,7 +1544,7 @@ void createUniformBuffers(){
 void createDescriptorPool(){
     std::array<VkDescriptorPoolSize,3> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *2);
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *3);
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1541,7 +1555,7 @@ void createDescriptorPool(){
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
 
-    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *4);
+    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *5);
 
     if (vkCreateDescriptorPool(logicalDevice, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor pool!");
@@ -1569,7 +1583,7 @@ void createDescriptorSets(){
         bufferInfo.range = sizeof(UniformBufferObject);
 
         VkDescriptorBufferInfo bufferInfov2{};
-        bufferInfov2.buffer = uniformBuffersv2[i];
+        bufferInfov2.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT +i];
         bufferInfov2.offset = 0;
         bufferInfov2.range = sizeof(vecTwo);
 
@@ -1765,7 +1779,11 @@ void updateUniformBuffer(uint32_t currentImage){
     vecTwo v2{};
     v2.xy = glm::vec2(swapChainExtent.width,swapChainExtent.height);
 
-    memcpy(uniformBuffersMappedv2[currentImage], &v2, sizeof(v2));
+    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT +currentImage], &v2, sizeof(v2));
+
+    float fov = 1;
+    v2.xy = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
+    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*2 +currentImage], &v2, sizeof(v2));
 }
 
 void drawFrame(){
@@ -1883,10 +1901,6 @@ void cleanUp(){
         vkFreeMemory(logicalDevice, uniformBuffersMemory[i], nullptr);
     }
 
-    for (int i = 0; i < uniformBuffersv2.size(); i++){
-        vkDestroyBuffer(logicalDevice, uniformBuffersv2[i], nullptr);
-        vkFreeMemory(logicalDevice, uniformBuffersMemoryv2[i], nullptr);
-    }
 
     vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
     vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
