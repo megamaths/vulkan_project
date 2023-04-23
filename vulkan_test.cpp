@@ -97,6 +97,11 @@ VkSampler imageSampler;
 VkImage computeOutImage;
 VkImageView computeOutImageView;
 VkDeviceMemory computeOutImageMemory;
+
+VkImage computeLastOutImage;
+VkImageView computeLastOutImageView;
+VkDeviceMemory computeLastOutImageMemory;
+
 VkPipeline computePipeline;
 VkPipelineLayout computePipelineLayout;
 VkDescriptorSetLayout computeDescriptorSetLayout;
@@ -114,6 +119,10 @@ struct UniformBufferObject {
 
 struct vecTwo {
     alignas(8) glm::vec2 xy;
+};
+
+struct ivecOne {
+    alignas(4) glm::ivec1 x;
 };
 
 struct Vertex{
@@ -237,7 +246,7 @@ void mainLoop();
 void cleanUp();
 
 void createComputeCommandBuffers();
-void createComputeImage();
+void createComputeImages();
 void createComputePipeLine();
 void createComputeDescriptorSetLayout();
 void createComputeDescriptorSets();
@@ -343,8 +352,9 @@ void initVulkan(){
 
     createCommandPool();
 
-    createComputeImage();// must be before descriptors made
+    createComputeImages();// must be before descriptors made
     transitionImageLayout(computeOutImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    transitionImageLayout(computeLastOutImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
 
     createSampler();
@@ -1308,26 +1318,43 @@ void createComputeCommandBuffers(){
     }
 }
 
-void createComputeImage(){
-    createImage(swapChainExtent.width,swapChainExtent.height,VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT
+void createComputeImages(){
+    createImage(swapChainExtent.width,swapChainExtent.height,VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_TILING_OPTIMAL,
+                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
                 , VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, computeOutImage, computeOutImageMemory);
     computeOutImageView = createImageView(computeOutImage, VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_ASPECT_COLOR_BIT);
+
+    createImage(swapChainExtent.width,swapChainExtent.height,VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_TILING_OPTIMAL,
+                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                , VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, computeLastOutImage, computeLastOutImageMemory);
+    computeLastOutImageView = createImageView(computeLastOutImage, VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_ASPECT_COLOR_BIT);
 }
 
 void createComputeDescriptorSetLayout(){
-    std::array<VkDescriptorSetLayoutBinding,2> layouts;
+    std::array<VkDescriptorSetLayoutBinding,4> layouts;
     layouts[0].binding = 0;
     layouts[0].descriptorCount = 1;
     layouts[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     layouts[0].pImmutableSamplers = nullptr;
     layouts[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-
     layouts[1].binding = 1;
     layouts[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     layouts[1].descriptorCount = 1;
     layouts[1].pImmutableSamplers = nullptr;
     layouts[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    layouts[2].binding = 2;
+    layouts[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    layouts[2].descriptorCount = 1;
+    layouts[2].pImmutableSamplers = nullptr;
+    layouts[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    layouts[3].binding = 3;
+    layouts[3].descriptorCount = 1;
+    layouts[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    layouts[3].pImmutableSamplers = nullptr;
+    layouts[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1354,17 +1381,29 @@ void createComputeDescriptorSets(){
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 
-        std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
 
         VkDescriptorImageInfo imageInfo{};
         imageInfo.sampler = imageSampler;
         imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;//?? validator said this is only allowed format
         imageInfo.imageView = computeOutImageView;
 
+        VkDescriptorImageInfo imageInfo2{};
+        imageInfo2.sampler = imageSampler;
+        imageInfo2.imageLayout = VK_IMAGE_LAYOUT_GENERAL;//?? validator said this is only allowed format
+        imageInfo2.imageView = computeLastOutImageView;
+
         VkDescriptorBufferInfo bufferInfov2{};
         bufferInfov2.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*2 +i];
         bufferInfov2.offset = 0;
         bufferInfov2.range = sizeof(vecTwo);
+
+        VkDescriptorBufferInfo bufferInfoI1{};
+        bufferInfoI1.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*3 +i];
+        bufferInfoI1.offset = 0;
+        bufferInfoI1.range = sizeof(ivecOne);
+
+
+        std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
 
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = computeDescriptorSets[i];
@@ -1381,6 +1420,22 @@ void createComputeDescriptorSets(){
         descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         descriptorWrites[1].descriptorCount = 1;
         descriptorWrites[1].pBufferInfo = &bufferInfov2;
+
+        descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[2].dstSet = computeDescriptorSets[i];
+        descriptorWrites[2].dstBinding = 2;
+        descriptorWrites[2].dstArrayElement = 0;
+        descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[2].descriptorCount = 1;
+        descriptorWrites[2].pBufferInfo = &bufferInfoI1;
+
+        descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[3].dstSet = computeDescriptorSets[i];
+        descriptorWrites[3].dstBinding = 3;
+        descriptorWrites[3].dstArrayElement = 0;
+        descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        descriptorWrites[3].descriptorCount = 1;
+        descriptorWrites[3].pImageInfo = &imageInfo2;
 
         vkUpdateDescriptorSets(logicalDevice, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
@@ -1430,6 +1485,33 @@ void recordComputeCommandBuffer(VkCommandBuffer commandBuffer,int i){
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[i], 0, 0);
 
     vkCmdDispatch(commandBuffer, swapChainExtent.width/16, swapChainExtent.height/16, 1);
+
+
+    // copy result to another image so can be used later
+    VkExtent3D extent{};
+    extent.depth = 1;
+    extent.width = swapChainExtent.width;
+    extent.height = swapChainExtent.height;
+
+    VkImageSubresourceLayers dstsr{};
+    VkImageSubresourceLayers srcsr{};
+
+    dstsr.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    dstsr.mipLevel = 0;
+    dstsr.baseArrayLayer = 0;
+    dstsr.layerCount = 1;
+
+    srcsr.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    srcsr.mipLevel = 0;
+    srcsr.baseArrayLayer = 0;
+    srcsr.layerCount = 1;
+
+    VkImageCopy regions{};
+    regions.extent = extent;
+    regions.dstSubresource = dstsr;
+    regions.srcSubresource = srcsr;
+
+    vkCmdCopyImage(commandBuffer, computeOutImage, VK_IMAGE_LAYOUT_GENERAL, computeLastOutImage, VK_IMAGE_LAYOUT_GENERAL, 1, &regions);
 
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
         throw std::runtime_error("failed to record command buffer!");
@@ -1518,13 +1600,17 @@ void createIndexBuffer(){
 void createUniformBuffers(){
     VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
-    int numUbos = 3;
+    const int numMatUbos = 1;
+    const int numVec2Ubos = 2;
+    const int numIvec1Ubos = 1;
+
+    const int numUbos = numMatUbos + numVec2Ubos + numIvec1Ubos;
 
     uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT *numUbos);
     uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT *numUbos);
     uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT *numUbos);
 
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT * numMatUbos; i++) {
         createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
 
         vkMapMemory(logicalDevice, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
@@ -1532,7 +1618,15 @@ void createUniformBuffers(){
 
     bufferSize = sizeof(vecTwo);
 
-    for (size_t i = MAX_FRAMES_IN_FLIGHT; i < MAX_FRAMES_IN_FLIGHT*numUbos; i++) {
+    for (size_t i = MAX_FRAMES_IN_FLIGHT * numMatUbos; i < MAX_FRAMES_IN_FLIGHT * (numMatUbos+numVec2Ubos); i++) {
+        createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
+
+        vkMapMemory(logicalDevice, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
+    }
+
+    bufferSize = sizeof(ivecOne);
+
+    for (size_t i = MAX_FRAMES_IN_FLIGHT * (numMatUbos+numVec2Ubos); i < MAX_FRAMES_IN_FLIGHT*numUbos; i++) {
         createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
 
         vkMapMemory(logicalDevice, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
@@ -1544,18 +1638,18 @@ void createUniformBuffers(){
 void createDescriptorPool(){
     std::array<VkDescriptorPoolSize,3> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *3);
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *4);
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *2);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
 
-    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *5);
+    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *7);
 
     if (vkCreateDescriptorPool(logicalDevice, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor pool!");
@@ -1784,6 +1878,10 @@ void updateUniformBuffer(uint32_t currentImage){
     float fov = 1;
     v2.xy = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*2 +currentImage], &v2, sizeof(v2));
+
+    ivecOne i1{};
+    i1.x = glm::ivec1(frame);
+    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*3 +currentImage], &i1, sizeof(i1));
 }
 
 void drawFrame(){
@@ -1920,8 +2018,12 @@ void cleanUp(){
     vkDestroyImage(logicalDevice, computeOutImage, nullptr);
     vkFreeMemory(logicalDevice, computeOutImageMemory, nullptr);
 
+    vkDestroyImage(logicalDevice, computeLastOutImage, nullptr);
+    vkFreeMemory(logicalDevice, computeLastOutImageMemory, nullptr);
+
     vkDestroySampler(logicalDevice, imageSampler, nullptr);
     vkDestroyImageView(logicalDevice, computeOutImageView, nullptr);
+    vkDestroyImageView(logicalDevice, computeLastOutImageView, nullptr);
     
     vkDestroyDevice(logicalDevice, nullptr);
     

@@ -8,12 +8,20 @@ layout(binding = 1) uniform vecTwo{
     vec2 xy;
 } screenExtent;
 
+layout(binding = 2) uniform ivecOne{
+    int x;
+} frameRand;
+
+layout (binding = 3, rgba8) uniform readonly image2D lastOutputImage;
+
 
 struct ray{
     vec3 dir;
     vec3 start;
+    // cumalative colour
     vec3 colour;
-    float energy;
+    // colour absorbsion
+    vec3 absorbsion;
 };
 
 float intersectSphere(ray testRay, vec3 spherecenter, float radius){
@@ -40,8 +48,8 @@ vec3 normalSphere(ray testRay ,float d, vec3 center){
 
 int seed = 0;
 
-void setSeed(int x, int y){
-    seed = x*1000+y;
+void setSeed(int x){
+    seed = x;
     seed = (seed ^ 61) ^ (seed >> 16);
     seed *= 9;
     seed = seed ^ (seed >> 4);
@@ -61,19 +69,21 @@ ray traceRay(ray mainRay){
 
     ray retRay;
     retRay.colour = mainRay.colour;
-    retRay.energy = 0;
+    retRay.absorbsion = mainRay.absorbsion;
 
 
     vec3 normal = vec3(0,0,0);
     float dist = 65536;
 
     vec3 newCol = vec3(0);
+    vec3 emmision = vec3(0.0);
 
     vec3 spos = vec3(0,0,4);
     float newdist = intersectSphere(mainRay, spos, 0.5);
     if (newdist < dist){
         normal = normalSphere(mainRay,newdist,spos);
-        newCol = vec3(0,0,1);
+        newCol = vec3(0,1,1);
+        emmision = newCol*0.1;
     }
     dist = min(dist,newdist);
 
@@ -81,37 +91,52 @@ ray traceRay(ray mainRay){
     newdist = intersectSphere(mainRay, spos, 2.5);
     if (newdist < dist){
         normal = normalSphere(mainRay,newdist,spos);
-        newCol = vec3(1,0,0);
+        newCol = vec3(1,1,1);
+        emmision = newCol*0.1;
     }
     dist = min(dist,newdist);
 
-    spos = vec3(-4,-4,20);
+    spos = vec3(-8,-8,16);
     newdist = intersectSphere(mainRay, spos, 5.5);
     if (newdist < dist){
         normal = normalSphere(mainRay,newdist,spos);
-        newCol = vec3(2,2,0);
+        newCol = vec3(1,1,0);
+        emmision = vec3(1,1,0);
+    }
+    dist = min(dist,newdist);
+
+    spos = vec3(8,-6,20);
+    newdist = intersectSphere(mainRay, spos, 1.5);
+    if (newdist < dist){
+        normal = normalSphere(mainRay,newdist,spos);
+        newCol = vec3(0,1,0);
+        emmision = newCol*0.1;
     }
     dist = min(dist,newdist);
 
 
+
     if (dist > 65535){
-        retRay.energy = 0;
-        return retRay;// ?? as energy is 0 should not try to reflect of the void
+        retRay.absorbsion = vec3(0);
+        return retRay;// ?? as absorbsion is 0 should not try to reflect of the void
     }
 
 
     // if hit
     vec3 reflectRay = reflect(mainRay.dir,normal);
-    vec3 randDir = vec3(randVal()%256/128.0-1.0,randVal()%256/128.0-1.0,randVal()%256/128.0-1.0)*0.25;
+    vec3 randDir = vec3(randVal()%256/128.0-1.0,randVal()%256/128.0-1.0,randVal()%256/128.0-1.0)*3.8;
 
-
+    if (dot(randDir,normal) < 0){
+        randDir = -randDir;
+    }
 
     retRay.dir = normalize(reflectRay + randDir);
-    retRay.start = mainRay.start + mainRay.dir * dist  +  retRay.dir *0.01;// not sure if last bit is nesisary it should prevent coliding with same object 2ce
+    retRay.start = mainRay.start + mainRay.dir * dist  +  retRay.dir *0.001;// not sure if last bit is nesisary it should prevent coliding with same object 2ce
 
+    float reflectivity = 0.1;
 
-    retRay.colour = mainRay.colour + (0.2*mainRay.energy)*newCol;
-    retRay.energy = mainRay.energy * 0.8;
+    retRay.colour = mainRay.colour + (mainRay.absorbsion)*emmision ;//+ newCol*0.01;
+    retRay.absorbsion *= newCol;
 
 
     return retRay;
@@ -125,26 +150,31 @@ void main(){
     ivec2 xy_int = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(outputImage);
     vec2 xy_float = vec2(gl_GlobalInvocationID.x / float(size.x), gl_GlobalInvocationID.y / float(size.y));
-    setSeed(xy_int.x,xy_int.y);
+    setSeed(frameRand.x*1000000+(xy_int.x*1000+xy_int.y));
 
 
     ray mainray;
-    mainray.start = vec3(0,0,0);
-    mainray.dir = normalize(vec3((xy_float+vec2(-0.5,-0.5))*screenExtent.xy,1.0));
-    mainray.colour = vec3(0.0);
-    mainray.energy = 1;
 
     vec3 colour = vec3(0);
 
-    for (int i = 0; i < 30; i++){
+    for (int i = 0; i < 100; i++){
+        mainray.start = vec3(0,0,0);
+        mainray.dir = normalize(vec3((xy_float+vec2(-0.5,-0.5))*screenExtent.xy,1.0));
+        mainray.colour = vec3(0.0);
+        mainray.absorbsion = vec3(1.0);
 
-        mainray = traceRay(mainray);
-        if (mainray.energy < 0.1){
-            break;
+        for (int itr = 0; itr < 8; itr++){
+
+            mainray = traceRay(mainray);
+            if (length(mainray.absorbsion) < 0.01){
+                break;
+            }
         }
-        
+        colour += mainray.colour /100.0;
     }
-    colour = mainray.colour;
     //imageStore(outputImage, xy_int, vec4(vec3(1-dist) , 1.0f));
+
+    vec3 sampleColour = imageLoad(lastOutputImage, xy_int).rgb;
+    colour = (sampleColour*0.9+colour*0.1);
     imageStore(outputImage, xy_int, vec4(colour , 1.0f));
 }
