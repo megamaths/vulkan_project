@@ -13,6 +13,8 @@ void main() {
     vec2 fragTexCoord = vec2(gl_FragCoord.xy/screenSize.xy);
     vec3 pixel = texture(texSampler, fragTexCoord).rgb;
 
+    //pixel = pow(pixel,vec3(1/1.1)); //gamma correction not used
+
     outColor = vec4(pixel, 1.0);
     //utColor = vec4(gl_FragCoord.xy/800.0,0.0,1.0);
 }

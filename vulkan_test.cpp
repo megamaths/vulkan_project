@@ -34,6 +34,7 @@ const int MAX_FRAMES_IN_FLIGHT = 2;
 int currentFrame = 0;
 int frame = 0;
 
+const int numSpheres = 16;
 
 
 bool framebufferResized = false;
@@ -123,6 +124,21 @@ struct vecTwo {
 
 struct ivecOne {
     alignas(4) glm::ivec1 x;
+};
+
+struct sphere {
+    alignas(16) glm::vec4 dim;
+};
+struct spheres {
+    alignas(16) glm::vec4 dims[16];
+    alignas(16) glm::ivec4 mats[16/4];
+};
+
+
+struct computeState{
+    alignas(8) glm::vec2 screenExtent;
+    alignas(4) glm::ivec1 x;
+    alignas(4) glm::ivec1 numSpheres;
 };
 
 struct Vertex{
@@ -353,8 +369,8 @@ void initVulkan(){
     createCommandPool();
 
     createComputeImages();// must be before descriptors made
-    transitionImageLayout(computeOutImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-    transitionImageLayout(computeLastOutImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    transitionImageLayout(computeOutImage, VK_FORMAT_R16G16B16A16_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    transitionImageLayout(computeLastOutImage, VK_FORMAT_R16G16B16A16_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
 
     createSampler();
@@ -1319,15 +1335,15 @@ void createComputeCommandBuffers(){
 }
 
 void createComputeImages(){
-    createImage(swapChainExtent.width,swapChainExtent.height,VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_TILING_OPTIMAL,
+    createImage(swapChainExtent.width,swapChainExtent.height,VK_FORMAT_R16G16B16A16_UNORM,VK_IMAGE_TILING_OPTIMAL,
                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
                 , VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, computeOutImage, computeOutImageMemory);
-    computeOutImageView = createImageView(computeOutImage, VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_ASPECT_COLOR_BIT);
+    computeOutImageView = createImageView(computeOutImage, VK_FORMAT_R16G16B16A16_UNORM,VK_IMAGE_ASPECT_COLOR_BIT);
 
-    createImage(swapChainExtent.width,swapChainExtent.height,VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_TILING_OPTIMAL,
+    createImage(swapChainExtent.width,swapChainExtent.height,VK_FORMAT_R16G16B16A16_UNORM,VK_IMAGE_TILING_OPTIMAL,
                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
                 , VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, computeLastOutImage, computeLastOutImageMemory);
-    computeLastOutImageView = createImageView(computeLastOutImage, VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_ASPECT_COLOR_BIT);
+    computeLastOutImageView = createImageView(computeLastOutImage, VK_FORMAT_R16G16B16A16_UNORM,VK_IMAGE_ASPECT_COLOR_BIT);
 }
 
 void createComputeDescriptorSetLayout(){
@@ -1339,8 +1355,8 @@ void createComputeDescriptorSetLayout(){
     layouts[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     layouts[1].binding = 1;
-    layouts[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     layouts[1].descriptorCount = 1;
+    layouts[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     layouts[1].pImmutableSamplers = nullptr;
     layouts[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
@@ -1351,8 +1367,8 @@ void createComputeDescriptorSetLayout(){
     layouts[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     layouts[3].binding = 3;
+    layouts[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     layouts[3].descriptorCount = 1;
-    layouts[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     layouts[3].pImmutableSamplers = nullptr;
     layouts[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
@@ -1392,15 +1408,16 @@ void createComputeDescriptorSets(){
         imageInfo2.imageLayout = VK_IMAGE_LAYOUT_GENERAL;//?? validator said this is only allowed format
         imageInfo2.imageView = computeLastOutImageView;
 
-        VkDescriptorBufferInfo bufferInfov2{};
-        bufferInfov2.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*2 +i];
-        bufferInfov2.offset = 0;
-        bufferInfov2.range = sizeof(vecTwo);
+        VkDescriptorBufferInfo bufferInfoComputeState{};
+        bufferInfoComputeState.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*2 +i];
+        bufferInfoComputeState.offset = 0;
+        bufferInfoComputeState.range = sizeof(computeState);
 
-        VkDescriptorBufferInfo bufferInfoI1{};
-        bufferInfoI1.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*3 +i];
-        bufferInfoI1.offset = 0;
-        bufferInfoI1.range = sizeof(ivecOne);
+
+        VkDescriptorBufferInfo bufferInfoSpheres{};
+        bufferInfoSpheres.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*3 +i];
+        bufferInfoSpheres.offset = 0;
+        bufferInfoSpheres.range = sizeof(spheres);
 
 
         std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
@@ -1417,9 +1434,9 @@ void createComputeDescriptorSets(){
         descriptorWrites[1].dstSet = computeDescriptorSets[i];
         descriptorWrites[1].dstBinding = 1;
         descriptorWrites[1].dstArrayElement = 0;
-        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         descriptorWrites[1].descriptorCount = 1;
-        descriptorWrites[1].pBufferInfo = &bufferInfov2;
+        descriptorWrites[1].pImageInfo = &imageInfo2;
 
         descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[2].dstSet = computeDescriptorSets[i];
@@ -1427,15 +1444,15 @@ void createComputeDescriptorSets(){
         descriptorWrites[2].dstArrayElement = 0;
         descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         descriptorWrites[2].descriptorCount = 1;
-        descriptorWrites[2].pBufferInfo = &bufferInfoI1;
+        descriptorWrites[2].pBufferInfo = &bufferInfoComputeState;
 
         descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[3].dstSet = computeDescriptorSets[i];
         descriptorWrites[3].dstBinding = 3;
         descriptorWrites[3].dstArrayElement = 0;
-        descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         descriptorWrites[3].descriptorCount = 1;
-        descriptorWrites[3].pImageInfo = &imageInfo2;
+        descriptorWrites[3].pBufferInfo = &bufferInfoSpheres;
 
         vkUpdateDescriptorSets(logicalDevice, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
@@ -1598,41 +1615,36 @@ void createIndexBuffer(){
 }
 
 void createUniformBuffers(){
-    VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+    VkDeviceSize bufferSize;
 
-    const int numMatUbos = 1;
-    const int numVec2Ubos = 2;
-    const int numIvec1Ubos = 1;
+    const std::vector<int> numUbos = {1,1,1,1};
+    const std::vector<VkDeviceSize> sizeUbos = {sizeof(UniformBufferObject),
+                                                sizeof(vecTwo),
+                                                sizeof(computeState),
+                                                sizeof(spheres)};
 
-    const int numUbos = numMatUbos + numVec2Ubos + numIvec1Ubos;
+    std::vector<int> cumulativeSum = {0};
+    for (int i = 0; i < numUbos.size(); i++){
+        cumulativeSum.push_back(numUbos[i]*MAX_FRAMES_IN_FLIGHT +cumulativeSum[i]);
+        std::cout << cumulativeSum[cumulativeSum.size()-1] << "\n";
+    }
 
-    uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT *numUbos);
-    uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT *numUbos);
-    uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT *numUbos);
+    uniformBuffers.resize(cumulativeSum[cumulativeSum.size()-1]);
+    uniformBuffersMemory.resize(cumulativeSum[cumulativeSum.size()-1]);
+    uniformBuffersMapped.resize(cumulativeSum[cumulativeSum.size()-1]);
 
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT * numMatUbos; i++) {
+    int index = 0;
+
+    for (int i = 0; i < cumulativeSum[cumulativeSum.size()-1]; i++){
+        while (cumulativeSum[index] <= i){
+            index++;
+            bufferSize = sizeUbos[index-1];
+        }
+        std::cout << index << " " << i << " " << bufferSize << "\n";
         createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
 
         vkMapMemory(logicalDevice, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
     }
-
-    bufferSize = sizeof(vecTwo);
-
-    for (size_t i = MAX_FRAMES_IN_FLIGHT * numMatUbos; i < MAX_FRAMES_IN_FLIGHT * (numMatUbos+numVec2Ubos); i++) {
-        createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
-
-        vkMapMemory(logicalDevice, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
-    }
-
-    bufferSize = sizeof(ivecOne);
-
-    for (size_t i = MAX_FRAMES_IN_FLIGHT * (numMatUbos+numVec2Ubos); i < MAX_FRAMES_IN_FLIGHT*numUbos; i++) {
-        createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
-
-        vkMapMemory(logicalDevice, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
-    }
-
-
 }
 
 void createDescriptorPool(){
@@ -1875,13 +1887,30 @@ void updateUniformBuffer(uint32_t currentImage){
 
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT +currentImage], &v2, sizeof(v2));
 
+    computeState state;
     float fov = 1;
-    v2.xy = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
-    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*2 +currentImage], &v2, sizeof(v2));
+    state.screenExtent = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
+    state.x = glm::ivec1(frame);
+    state.numSpheres = glm::ivec1(numSpheres);
+    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*2 +currentImage], &state, sizeof(state));
 
-    ivecOne i1{};
-    i1.x = glm::ivec1(frame);
-    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*3 +currentImage], &i1, sizeof(i1));
+    spheres s;
+    for (int i = 6; i < numSpheres; i++){
+        s.dims[i] = glm::vec4(i*0.1,0,1,0.1);
+    }
+
+    s.dims[0] = glm::vec4(0,0,4,0.5);
+    s.dims[1] = glm::vec4(1,2,5,2.5);
+    s.dims[2] = glm::vec4(8,-6,20,2.5);
+    s.dims[3] = glm::vec4(-8,-8,16,5.5);
+    s.dims[4] = glm::vec4(0,0,80,45);
+    s.dims[5] = glm::vec4(0,0,2,0.1);
+
+    for (int i = 0; i < numSpheres/4; i++){
+        s.mats[i] = glm::ivec4(4*(i%2),4*(i%2)+1,4*(i%2)+2,4*(i%2)+3);
+    }
+    
+    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*3 +currentImage], &s, sizeof(s));
 }
 
 void drawFrame(){
