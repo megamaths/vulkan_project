@@ -5,6 +5,12 @@ struct sphere{
     vec4 dim;
 };
 
+struct triangle{
+    vec3 v1;
+    vec3 v2;
+    vec3 v3;
+};
+
 struct material{
     vec3 col;
     vec3 emmision;
@@ -20,6 +26,7 @@ layout (binding = 2) uniform computeState{
     vec2 screenExtent;
     int frame;
     int numSpheres;
+    int numTriangles;
 } state;
 
 layout(binding = 3) uniform spheres{
@@ -28,6 +35,19 @@ layout(binding = 3) uniform spheres{
     // material index
     ivec4 mat[4];
 } s;
+
+layout(binding = 4) uniform materials{
+    //xyz is colour w is roughness
+    vec4 colAndR[16];
+    // xyz is emmision w not used yet
+    vec4 emmision[16];
+} m;
+
+layout(binding = 5) uniform triangles{
+    vec3 v1[16];
+    vec3 v2[16];
+    vec3 v3[16];
+} t;
 
 struct ray{
     vec3 dir;
@@ -62,6 +82,37 @@ float intersectSphere(ray testRay, sphere testSphere){
 vec3 normalSphere(ray testRay ,float d, vec3 center){
     return normalize(testRay.start+testRay.dir*d-center);
 }
+
+vec3 normalTriangle(triangle t){
+    return normalize(cross(t.v2-t.v1,t.v3-t.v1));
+}
+
+float intersectTriangle(ray testRay, triangle testTri){
+
+    vec3 n = normalTriangle(testTri);
+    float d = -dot(n,testTri.v1);
+
+    float t = - (dot(n, testRay.start) + d) / dot(n, testRay.dir);
+    // dist = abs(n.p + d)/n.v
+
+    if (t < 0){
+        return 65536;
+    }
+
+    vec3 pos = testRay.start + t*testRay.dir;
+
+    vec3 edge0 = testTri.v2 - testTri.v1;
+    vec3 edge1 = testTri.v3 - testTri.v2;
+    vec3 edge2 = testTri.v1 - testTri.v3;
+    vec3 C0 = pos - testTri.v1;
+    vec3 C1 = pos - testTri.v2;
+    vec3 C2 = pos - testTri.v3;
+    vec3 sides = vec3(dot(n, cross(edge0, C0)) > 0 ,dot(n, cross(edge1, C1)) > 0 , dot(n, cross(edge2, C2)) > 0);
+    if (sides[0] == sides[1] && sides[0] == sides[2]) return t; // P is inside the triangle
+
+	return 65536;
+}
+
 
 int seed = 0;
 
@@ -108,49 +159,7 @@ ray traceRay(ray mainRay){
     float abience = 0.01;
 
     float roughness = 0;
-    int sphereNum = 0;
 
-
-    material mats[8];
-
-    material m1;
-    m1.col = vec3(0,1,1);
-    m1.emmision = vec3(0,0,0);
-    m1.roughness = 0.8;
-
-    material m2;
-    m2.col = vec3(1,1,1);
-    m2.emmision = vec3(0,0,0);
-    m2.roughness = 4.8;
-
-    material m3;
-    m3.col = vec3(0,1,0);
-    m3.emmision = vec3(0.01,0.01,0.01);
-    m3.roughness = 0.8;
-
-    material m4;
-    m4.col = vec3(0,0,0);
-    m4.emmision = vec3(1,1,0.7);
-    m4.roughness = 0.8;
-
-    material m5;
-    m5.col = vec3(1,0.5,0.5);
-    m5.emmision = vec3(0,0,0);
-    m5.roughness = 0.0;
-
-    material m6;
-    m6.col = vec3(1,1,1);
-    m6.emmision = vec3(10,10,10);
-    m6.roughness = 0.0;
-
-    mats[0] = m1;
-    mats[1] = m2;
-    mats[2] = m3;
-    mats[3] = m4;
-    mats[4] = m5;
-    mats[5] = m6;
-    mats[6] = m1;
-    mats[7] = m2;
     
 
     for (int i = 0; i < state.numSpheres && i < 16; i++){
@@ -162,13 +171,65 @@ ray traceRay(ray mainRay){
         float newdist = intersectSphere(mainRay, newSphere);
         if (newdist < dist){
             normal = normalSphere(mainRay,newdist,newSphere.dim.xyz);
-            newCol = mats[mindx].col;
-            emmision = mats[mindx].emmision;
-            roughness = mats[mindx].roughness;
-            sphereNum = i;
+            newCol = m.colAndR[mindx].xyz;
+            emmision = m.emmision[mindx].xyz;
+            roughness = m.colAndR[mindx].w;
         }
         dist = abs(min(dist,newdist));
+    }
 
+    triangle tri;
+    tri.v1 = vec3(-3,0,3);
+    tri.v2 = vec3(-3,4,3);
+    tri.v3 = vec3(1,0,3);
+
+    float newdist = intersectTriangle(mainRay, tri);
+    if (newdist < dist){
+        vec3 pos = mainRay.start + mainRay.dir*newdist;
+        vec3 n = normalTriangle(tri);
+        vec3 edge0 = tri.v2 - tri.v1;
+        vec3 edge1 = tri.v3 - tri.v2;
+        vec3 edge2 = tri.v1 - tri.v3;
+        vec3 C0 = pos - tri.v1;
+        vec3 C1 = pos - tri.v2;
+        vec3 C2 = pos - tri.v3;
+        vec3 sides = vec3(dot(n, cross(edge0, C0)) , dot(n, cross(edge1, C1)), dot(n, cross(edge2, C2)));
+        normal = normalTriangle(tri);
+        if (dot(normal,mainRay.dir) > 0){
+            normal *= -1;
+        }
+        newCol = sides;//m.colAndR[0].xyz;
+        emmision = sides*0.1;//m.emmision[0].xyz;
+        roughness = 10;
+    }
+    dist = abs(min(dist,newdist));
+
+    for (int i = 0; i < state.numTriangles && i < 16 ;i++){
+        triangle tri;
+        tri.v1 = t.v1[i];
+        tri.v2 = t.v2[i];
+        tri.v3 = t.v3[i];
+
+        float newdist = intersectTriangle(mainRay, tri);
+        if (newdist < dist){
+            vec3 pos = mainRay.start + mainRay.dir*newdist;
+            vec3 n = normalTriangle(tri);
+            vec3 edge0 = tri.v2 - tri.v1;
+            vec3 edge1 = tri.v3 - tri.v2;
+            vec3 edge2 = tri.v1 - tri.v3;
+            vec3 C0 = pos - tri.v1;
+            vec3 C1 = pos - tri.v2;
+            vec3 C2 = pos - tri.v3;
+            vec3 sides = vec3(dot(n, cross(edge0, C0)) , dot(n, cross(edge1, C1)), dot(n, cross(edge2, C2)));
+            normal = normalTriangle(tri);
+            if (dot(normal,mainRay.dir) > 0){
+                normal *= -1;
+            }
+            newCol = sides;//m.colAndR[0].xyz;
+            emmision = sides*0.1;//m.emmision[0].xyz;
+            roughness = 10;
+        }
+        dist = abs(min(dist,newdist));
     }
 
 
@@ -198,8 +259,8 @@ ray traceRay(ray mainRay){
     newCol = abs(newCol);
 
     retRay.dir = normalize(reflectRay + randDir);
-    retRay.start = mainRay.start + mainRay.dir * dist;//  +  retRay.dir *0.001;// not sure if last bit is nesisary it should prevent coliding with same object 2ce
-
+    retRay.start = mainRay.start + mainRay.dir * dist  +  retRay.dir *0.001;// not sure if last bit is nesisary it should prevent coliding with same object 2ce
+                                                                            // appears only nessisary for triangles not spheres
     retRay.colour = mainRay.colour + (mainRay.absorbsion)*emmision*nDotL + newCol*abience;
     retRay.absorbsion *= newCol;
 
@@ -221,26 +282,32 @@ void main(){
 
     vec3 colour = vec3(0);
 
-    for (int i = 0; i < 10; i++){
-        mainray.start = vec3(0,0,-5);
+    int numRays = 16;
+
+    for (int i = 0; i < numRays; i++){
+        mainray.start = vec3(-5,0,-5);
         mainray.dir = normalize(vec3((xy_float+vec2(-0.5,-0.5))*state.screenExtent,1.0));
         mainray.colour = vec3(0.0);
         mainray.absorbsion = vec3(1.0);
 
-        for (int itr = 0; itr < 4; itr++){
+        float theta = -0.5;
+        vec3 newdir = vec3(cos(theta)*mainray.dir[0]-sin(theta)*mainray.dir[2],mainray.dir[1],sin(theta)*mainray.dir[0]+cos(theta)*mainray.dir[2]);
+        mainray.dir = newdir;
+
+        for (int itr = 0; itr < 10; itr++){
 
             mainray = traceRay(mainray);
             if (length(mainray.absorbsion) < 0.01){
                 break;
             }
         }
-        colour += mainray.colour /10.0;
+        colour += mainray.colour /float(numRays);
     }
     //imageStore(outputImage, xy_int, vec4(vec3(1-dist) , 1.0f));
 
     vec3 sampleColour = imageLoad(lastOutputImage, xy_int).rgb;
 
-    float keepOld = min(state.frame/float(1+state.frame),0.95);
+    float keepOld = min(state.frame/float(1+state.frame),0.995);
 
     colour = (sampleColour*keepOld+colour*(1-keepOld));
     colour = abs(colour);

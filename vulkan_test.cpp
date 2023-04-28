@@ -34,7 +34,8 @@ const int MAX_FRAMES_IN_FLIGHT = 2;
 int currentFrame = 0;
 int frame = 0;
 
-const int numSpheres = 16;
+const int numSpheres = 8;
+const int numTriangles = 8;
 
 
 bool framebufferResized = false;
@@ -134,11 +135,33 @@ struct spheres {
     alignas(16) glm::ivec4 mats[16/4];
 };
 
+struct material {
+    alignas(16) glm::vec4 colAndR;
+    alignas(16) glm::vec3 emmision;
+};
+struct materials {
+    alignas(16) glm::vec4 colAndR[16];
+    alignas(16) glm::vec4 emmision[16];
+};
+
+struct triangle {
+    alignas(16) glm::vec3 v1;
+    alignas(16) glm::vec3 v2;
+    alignas(16) glm::vec3 v3;
+};
+struct triangles {
+    // xyz are pos w is if needed
+    alignas(16) glm::vec4 v1[16];
+    alignas(16) glm::vec4 v2[16];
+    alignas(16) glm::vec4 v3[16];
+};
+
 
 struct computeState{
     alignas(8) glm::vec2 screenExtent;
     alignas(4) glm::ivec1 x;
     alignas(4) glm::ivec1 numSpheres;
+    alignas(4) glm::ivec1 numTriangles;
 };
 
 struct Vertex{
@@ -1347,7 +1370,7 @@ void createComputeImages(){
 }
 
 void createComputeDescriptorSetLayout(){
-    std::array<VkDescriptorSetLayoutBinding,4> layouts;
+    std::array<VkDescriptorSetLayoutBinding,6> layouts;
     layouts[0].binding = 0;
     layouts[0].descriptorCount = 1;
     layouts[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1371,6 +1394,18 @@ void createComputeDescriptorSetLayout(){
     layouts[3].descriptorCount = 1;
     layouts[3].pImmutableSamplers = nullptr;
     layouts[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    layouts[4].binding = 4;
+    layouts[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    layouts[4].descriptorCount = 1;
+    layouts[4].pImmutableSamplers = nullptr;
+    layouts[4].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    layouts[5].binding = 5;
+    layouts[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    layouts[5].descriptorCount = 1;
+    layouts[5].pImmutableSamplers = nullptr;
+    layouts[5].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1420,7 +1455,19 @@ void createComputeDescriptorSets(){
         bufferInfoSpheres.range = sizeof(spheres);
 
 
-        std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
+        VkDescriptorBufferInfo bufferInfoMats{};
+        bufferInfoMats.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*4 +i];
+        bufferInfoMats.offset = 0;
+        bufferInfoMats.range = sizeof(materials);
+
+
+        VkDescriptorBufferInfo bufferInfoTris{};
+        bufferInfoTris.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*5 +i];
+        bufferInfoTris.offset = 0;
+        bufferInfoTris.range = sizeof(triangles);
+
+
+        std::array<VkWriteDescriptorSet, 6> descriptorWrites{};
 
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = computeDescriptorSets[i];
@@ -1453,6 +1500,23 @@ void createComputeDescriptorSets(){
         descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         descriptorWrites[3].descriptorCount = 1;
         descriptorWrites[3].pBufferInfo = &bufferInfoSpheres;
+
+        descriptorWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[4].dstSet = computeDescriptorSets[i];
+        descriptorWrites[4].dstBinding = 4;
+        descriptorWrites[4].dstArrayElement = 0;
+        descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[4].descriptorCount = 1;
+        descriptorWrites[4].pBufferInfo = &bufferInfoMats;
+
+        descriptorWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[5].dstSet = computeDescriptorSets[i];
+        descriptorWrites[5].dstBinding = 5;
+        descriptorWrites[5].dstArrayElement = 0;
+        descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[5].descriptorCount = 1;
+        descriptorWrites[5].pBufferInfo = &bufferInfoTris;
+
 
         vkUpdateDescriptorSets(logicalDevice, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
@@ -1617,16 +1681,17 @@ void createIndexBuffer(){
 void createUniformBuffers(){
     VkDeviceSize bufferSize;
 
-    const std::vector<int> numUbos = {1,1,1,1};
+    const std::vector<int> numUbos = {1,1,1,1,1,1};
     const std::vector<VkDeviceSize> sizeUbos = {sizeof(UniformBufferObject),
                                                 sizeof(vecTwo),
                                                 sizeof(computeState),
-                                                sizeof(spheres)};
+                                                sizeof(spheres),
+                                                sizeof(materials),
+                                                sizeof(triangles)};
 
     std::vector<int> cumulativeSum = {0};
     for (int i = 0; i < numUbos.size(); i++){
         cumulativeSum.push_back(numUbos[i]*MAX_FRAMES_IN_FLIGHT +cumulativeSum[i]);
-        std::cout << cumulativeSum[cumulativeSum.size()-1] << "\n";
     }
 
     uniformBuffers.resize(cumulativeSum[cumulativeSum.size()-1]);
@@ -1640,7 +1705,6 @@ void createUniformBuffers(){
             index++;
             bufferSize = sizeUbos[index-1];
         }
-        std::cout << index << " " << i << " " << bufferSize << "\n";
         createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
 
         vkMapMemory(logicalDevice, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
@@ -1650,7 +1714,7 @@ void createUniformBuffers(){
 void createDescriptorPool(){
     std::array<VkDescriptorPoolSize,3> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *4);
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *6);
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1661,7 +1725,7 @@ void createDescriptorPool(){
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
 
-    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *7);
+    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *9);
 
     if (vkCreateDescriptorPool(logicalDevice, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor pool!");
@@ -1892,6 +1956,7 @@ void updateUniformBuffer(uint32_t currentImage){
     state.screenExtent = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
     state.x = glm::ivec1(frame);
     state.numSpheres = glm::ivec1(numSpheres);
+    state.numTriangles = glm::ivec1(numTriangles);
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*2 +currentImage], &state, sizeof(state));
 
     spheres s;
@@ -1909,8 +1974,45 @@ void updateUniformBuffer(uint32_t currentImage){
     for (int i = 0; i < numSpheres/4; i++){
         s.mats[i] = glm::ivec4(4*(i%2),4*(i%2)+1,4*(i%2)+2,4*(i%2)+3);
     }
-    
+
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*3 +currentImage], &s, sizeof(s));
+
+    materials m;
+    for (int i = 0; i < 16; i++){
+        m.colAndR[i] = glm::vec4(1,0,0,0);
+        m.emmision[i] = glm::vec4(1,0,0,0);
+    }
+
+    m.colAndR[0] = glm::vec4(0,1,1,0.8);
+    m.emmision[0] = glm::vec4(0,0,0,0);
+
+    m.colAndR[1] = glm::vec4(1,1,1,4.8);
+    m.emmision[1] = glm::vec4(0,0,0,0);
+
+    m.colAndR[2] = glm::vec4(0,1,0,0.8);
+    m.emmision[2] = glm::vec4(0.01,0.01,0.01,0);
+
+    m.colAndR[3] = glm::vec4(0,0,0,0.8);
+    m.emmision[3] = glm::vec4(1,1,0.7,0);
+
+    m.colAndR[4] = glm::vec4(1,0.5,0.5,0.0);
+    m.emmision[4] = glm::vec4(0,0,0,0);
+
+    m.colAndR[5] = glm::vec4(1,1,1,0.0);
+    m.emmision[5] = glm::vec4(2,2,2,0);
+
+    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*4 +currentImage], &m, sizeof(m));
+
+    triangles t;
+    for (int i = 0; i < 16; i++){
+        t.v1[i] = glm::vec4(-i,-i,i*0.2,0);
+        t.v2[i] = glm::vec4(0,-i,i*0.2,0);
+        t.v3[i] = glm::vec4(-i,0,i*0.2,0);
+    }
+
+    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*5 +currentImage], &t, sizeof(t));
+
+    
 }
 
 void drawFrame(){
