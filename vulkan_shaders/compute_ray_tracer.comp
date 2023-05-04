@@ -27,6 +27,8 @@ layout (binding = 2) uniform computeState{
     int frame;
     int numSpheres;
     int numTriangles;
+    int numRootBVs;
+    vec3 pos;
 } state;
 
 layout(binding = 3) uniform spheres{
@@ -43,11 +45,20 @@ layout(binding = 4) uniform materials{
     vec4 emmision[16];
 } m;
 
-layout(binding = 5) uniform triangles{
-    vec3 v1[16];
-    vec3 v2[16];
-    vec3 v3[16];
-} t;
+layout(binding = 5) uniform indicies{
+    // xyz are index for 1 triangle w is mat
+    ivec4 indx[16];
+} inds;
+
+layout(binding = 6) uniform verticies{
+    // xyz are vert pos
+    vec4 verts[16];
+} verts;
+
+layout(binding = 7) uniform bvh{
+    // a large block of data
+    vec4 data[64];
+} bvhData;
 
 struct ray{
     vec3 dir;
@@ -58,7 +69,24 @@ struct ray{
     vec3 absorbsion;
 };
 
+float interSectAABB(ray testRay, vec3 mins, vec3 maxes){
+    vec3 t0 = (mins-testRay.start)/testRay.dir;
+    vec3 t1 = (maxes-testRay.start)/testRay.dir;
+    vec3 tmin = min(t0,t1);
+    vec3 tmax = max(t0,t1);
 
+    float dstA = max(max(tmin.x,tmin.y),tmin.z);
+    float dstB = min(min(tmax.x,tmax.y),tmax.z);
+
+    // case 1 intersect A from outside 0 < a < b
+    // case 2 intersect from inside a < 0 < b
+    // case 3 no intersect a > b
+
+    //float distToBox = max(0,dstA);
+    //float distInBox = max(0,dstB-distToBox);
+
+    return dstA > dstB ? 65536 : max(0,dstA);// if dist to box > dist to out of box return 65536 else return dist to box
+}
 
 float intersectSphere(ray testRay, sphere testSphere){
 
@@ -178,42 +206,24 @@ ray traceRay(ray mainRay){
         dist = abs(min(dist,newdist));
     }
 
-    triangle tri;
-    tri.v1 = vec3(-3,0,3);
-    tri.v2 = vec3(-3,4,3);
-    tri.v3 = vec3(1,0,3);
-
-    float newdist = intersectTriangle(mainRay, tri);
-    if (newdist < dist){
-        vec3 pos = mainRay.start + mainRay.dir*newdist;
-        vec3 n = normalTriangle(tri);
-        vec3 edge0 = tri.v2 - tri.v1;
-        vec3 edge1 = tri.v3 - tri.v2;
-        vec3 edge2 = tri.v1 - tri.v3;
-        vec3 C0 = pos - tri.v1;
-        vec3 C1 = pos - tri.v2;
-        vec3 C2 = pos - tri.v3;
-        vec3 sides = vec3(dot(n, cross(edge0, C0)) , dot(n, cross(edge1, C1)), dot(n, cross(edge2, C2)));
-        normal = normalTriangle(tri);
-        if (dot(normal,mainRay.dir) > 0){
-            normal *= -1;
-        }
-        newCol = sides;//m.colAndR[0].xyz;
-        emmision = sides*0.1;//m.emmision[0].xyz;
-        roughness = 10;
-    }
-    dist = abs(min(dist,newdist));
 
     for (int i = 0; i < state.numTriangles && i < 16 ;i++){
         triangle tri;
-        tri.v1 = t.v1[i];
-        tri.v2 = t.v2[i];
-        tri.v3 = t.v3[i];
+        tri.v1 = verts.verts[inds.indx[i].x].xyz;
+        tri.v2 = verts.verts[inds.indx[i].y].xyz;
+        tri.v3 = verts.verts[inds.indx[i].z].xyz;
+        vec3 n = normalTriangle(tri);
+        if (dot(n,mainRay.dir)< 0){
+            continue;
+        }
 
         float newdist = intersectTriangle(mainRay, tri);
         if (newdist < dist){
+
+            int matNum = inds.indx[i].w;
+
             vec3 pos = mainRay.start + mainRay.dir*newdist;
-            vec3 n = normalTriangle(tri);
+            //vec3 n = normalTriangle(tri);
             vec3 edge0 = tri.v2 - tri.v1;
             vec3 edge1 = tri.v3 - tri.v2;
             vec3 edge2 = tri.v1 - tri.v3;
@@ -225,11 +235,76 @@ ray traceRay(ray mainRay){
             if (dot(normal,mainRay.dir) > 0){
                 normal *= -1;
             }
-            newCol = sides;//m.colAndR[0].xyz;
-            emmision = sides*0.1;//m.emmision[0].xyz;
-            roughness = 10;
+            newCol = m.colAndR[matNum].xyz;
+            emmision = m.emmision[matNum].xyz;
+            roughness = m.colAndR[matNum].w;
         }
         dist = abs(min(dist,newdist));
+    }
+
+
+    for (int i = 0; i < state.numRootBVs && i < 1; i++){
+        // each of first 12n floats are root nodes
+        // float 1: data start
+        // float 2: data numitems
+        // float 3: data stride
+        // float 4: data type
+        // float 5-7: mins
+        // float 9-11: maxes
+        int numItems = int(bvhData.data[3*i].y);
+        float boxDist = interSectAABB(mainRay,bvhData.data[3*i+1].xyz,bvhData.data[3*i+2].xyz);
+        if (boxDist < dist){// intersects AABB and before previous thing does
+            int dataStart = int(bvhData.data[3*i].x);
+            int dataStride = int(bvhData.data[3*i].z);
+            //retRay.colour = vec3(bvhData.data[3*i].xyz)/16.0;
+            //dist = min(dist,16);
+            switch (int(bvhData.data[3*i].w)){
+                case 0:// triangles (indexed)
+                    //mainRay.colour = vec3(1,0,0);
+
+                    for (int i = dataStart; i < dataStart+ dataStride*numItems ; i+= dataStride){
+                        //mainRay.colour = vec3(i/64.0,0,0);
+                        triangle tri;
+                        tri.v1 = bvhData.data[int(bvhData.data[i].x)].xyz;
+                        tri.v2 = bvhData.data[int(bvhData.data[i].y)].xyz;
+                        tri.v3 = bvhData.data[int(bvhData.data[i].z)].xyz;
+                        vec3 n = normalTriangle(tri);
+                        if (dot(n,mainRay.dir)< 0){
+                            continue;
+                        }
+
+                        float newdist = intersectTriangle(mainRay, tri);
+                        if (newdist < dist){
+
+                            int matNum = int(bvhData.data[i].w);
+
+                            //vec3 pos = mainRay.start + mainRay.dir*newdist;
+                            //vec3 n = normalTriangle(tri);
+                            //vec3 edge0 = tri.v2 - tri.v1;
+                            //vec3 edge1 = tri.v3 - tri.v2;
+                            //vec3 edge2 = tri.v1 - tri.v3;
+                            //vec3 C0 = pos - tri.v1;
+                            //vec3 C1 = pos - tri.v2;
+                            //vec3 C2 = pos - tri.v3;
+                            //vec3 sides = vec3(dot(n, cross(edge0, C0)) , dot(n, cross(edge1, C1)), dot(n, cross(edge2, C2)));
+                            normal = normalTriangle(tri);
+                            if (dot(normal,mainRay.dir) > 0){
+                                normal *= -1;
+                            }
+                            newCol = m.colAndR[matNum].xyz;
+                            emmision = m.emmision[matNum].xyz;
+                            roughness = m.colAndR[matNum].w;
+                        }
+                        dist = abs(min(dist,newdist));
+                    }
+
+                    break;
+                //default:
+                    
+            }
+        }
+
+        
     }
 
 
@@ -285,16 +360,21 @@ void main(){
     int numRays = 16;
 
     for (int i = 0; i < numRays; i++){
-        mainray.start = vec3(-5,0,-5);
+        mainray.start = state.pos;//vec3(-2,-5,-5);
         mainray.dir = normalize(vec3((xy_float+vec2(-0.5,-0.5))*state.screenExtent,1.0));
         mainray.colour = vec3(0.0);
         mainray.absorbsion = vec3(1.0);
 
-        float theta = -0.5;
-        vec3 newdir = vec3(cos(theta)*mainray.dir[0]-sin(theta)*mainray.dir[2],mainray.dir[1],sin(theta)*mainray.dir[0]+cos(theta)*mainray.dir[2]);
+
+        float phi = 0.5;
+        vec3 newdir = vec3(mainray.dir[0],cos(phi)*mainray.dir[1]+sin(phi)*mainray.dir[2],-sin(phi)*mainray.dir[1]+cos(phi)*mainray.dir[2]);
         mainray.dir = newdir;
 
-        for (int itr = 0; itr < 10; itr++){
+        float theta = -0.8;
+        newdir = vec3(cos(theta)*mainray.dir[0]-sin(theta)*mainray.dir[2],mainray.dir[1],sin(theta)*mainray.dir[0]+cos(theta)*mainray.dir[2]);
+        mainray.dir = newdir;
+
+        for (int itr = 0; itr < 3; itr++){
 
             mainray = traceRay(mainray);
             if (length(mainray.absorbsion) < 0.01){
@@ -307,7 +387,7 @@ void main(){
 
     vec3 sampleColour = imageLoad(lastOutputImage, xy_int).rgb;
 
-    float keepOld = min(state.frame/float(1+state.frame),0.995);
+    float keepOld = min(state.frame/float(1+state.frame),0.75);
 
     colour = (sampleColour*keepOld+colour*(1-keepOld));
     colour = abs(colour);
