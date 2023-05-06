@@ -2133,8 +2133,6 @@ void updateUniformBuffer(uint32_t currentImage){
     // float 5-7: mins
     // float 9-11: maxes
 
-    bvhdata.data[0] = glm::vec4(16,12,1,0); // start at 16 , 12 items , 1 vec4 stride, type is indexed triangle
-
     for (int j = 0; j < 12; j++){
         bvhdata.data[16+j] = glm::vec4(i.indx[j]) + glm::vec4(32,32,32,0);// as offset is 32 for vertex data
     }
@@ -2153,8 +2151,45 @@ void updateUniformBuffer(uint32_t currentImage){
             }
         }
     }
-    bvhdata.data[1] = mins;
-    bvhdata.data[2] = maxes;
+
+    for (int i = 0; i < 2; i++){
+        bvhdata.data[16+12+i*2] = glm::vec4(2.5+i,0,0,0.25);
+        bvhdata.data[16+12+i*2+1] = glm::vec4(i,0,0,0); // the 0s dont matter unused data
+    }
+    glm::vec4 mins2 = glm::vec4(65536,65536,65536,0);
+    glm::vec4 maxes2 = glm::vec4(-65536,-65536,-65536,0);
+    for (int i = 0; i < 2; i++){
+        for (int j = 0; j < 3; j++){
+            if (bvhdata.data[16+12+i*2][j]-bvhdata.data[16+12+i*2][3] < mins2[j]){
+                mins2[j] = bvhdata.data[16+12+i*2][j]-bvhdata.data[16+12+i*2][3];
+            }
+            if (bvhdata.data[16+12+i*2][j]+bvhdata.data[16+12+i*2][3] > maxes2[j]){
+                maxes2[j] = bvhdata.data[16+12+i*2][j]+bvhdata.data[16+12+i*2][3];
+            }
+        }
+    }
+    glm::vec4 totalmins = mins;
+    glm::vec4 totalmaxes = maxes;
+    for (int i = 0; i < 3; i++){
+        if (mins2[i] < totalmins[i]){
+            totalmins[i] = mins2[i];
+        }
+        if (maxes2[i] > totalmaxes[i]){
+            totalmaxes[i] = maxes2[i];
+        }
+    }
+
+    bvhdata.data[0] = glm::vec4(3,2,3,0); // start at 3 , 2 items , 3 vec4 stride, type is another bounding volume
+    bvhdata.data[1] = totalmins;
+    bvhdata.data[2] = totalmaxes;
+
+    bvhdata.data[3] = glm::vec4(16,12,1,1); // start at 16 , 12 items , 1 vec4 stride, type is indexed triangle
+    bvhdata.data[4] = mins;
+    bvhdata.data[5] = maxes;
+
+    bvhdata.data[6] = glm::vec4(16+12,2,2,2); // start at 28 (after triangles) , 2 items , 2 vec4 stride, type is sphere
+    bvhdata.data[7] = mins2;
+    bvhdata.data[8] = maxes2;
     
     
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*7 +currentImage], &bvhdata, sizeof(bvhdata));

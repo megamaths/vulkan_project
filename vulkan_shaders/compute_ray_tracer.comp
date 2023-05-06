@@ -243,23 +243,48 @@ ray traceRay(ray mainRay){
     }
 
 
-    for (int i = 0; i < state.numRootBVs && i < 1; i++){
+    int neededTestingBVs[256];// bvs indexed to in ubo
+    int endStack = 0;
+    // implemented as a stack
+
+    for (int i = 0; i < state.numRootBVs && i < 16; i++){
+        neededTestingBVs[i] = i*3;// because of stride = 3
+        endStack = i;
+    }
+
+    for (int i = 0; i < 10000; i++){// effective while but with safty limits
+
         // each of first 12n floats are root nodes
         // float 1: data start
-        // float 2: data numitems
+        // float 2: data num items
         // float 3: data stride
         // float 4: data type
         // float 5-7: mins
         // float 9-11: maxes
-        int numItems = int(bvhData.data[3*i].y);
-        float boxDist = interSectAABB(mainRay,bvhData.data[3*i+1].xyz,bvhData.data[3*i+2].xyz);
+        if (endStack == -1 || endStack == 256){
+            break;
+            // finished all items in stack or overFlowed
+        }
+        int index = neededTestingBVs[endStack];
+        endStack--;// effectivly telling the list ive finished this one so if adding new items will not leave this in
+
+        float boxDist = interSectAABB(mainRay,bvhData.data[index+1].xyz,bvhData.data[index+2].xyz);
         if (boxDist < dist){// intersects AABB and before previous thing does
-            int dataStart = int(bvhData.data[3*i].x);
-            int dataStride = int(bvhData.data[3*i].z);
-            //retRay.colour = vec3(bvhData.data[3*i].xyz)/16.0;
+            int dataStart = int(bvhData.data[index].x);
+            int numItems = int(bvhData.data[index].y);
+            int dataStride = int(bvhData.data[index].z);
+            //retRay.colour = vec3(bvhData.data[3*index].xyz)/16.0;
             //dist = min(dist,16);
-            switch (int(bvhData.data[3*i].w)){
-                case 0:// triangles (indexed)
+            switch (int(bvhData.data[index].w)){
+                case 0:// another bv
+                    // data stride should be 3
+                    for (int i = dataStart; i < dataStart+ dataStride*numItems; i += dataStride){
+                        endStack++;
+                        neededTestingBVs[endStack] = i;
+                    }
+                    break;
+                case 1:// triangles (indexed)
+                    // data stride should be 1
                     //mainRay.colour = vec3(1,0,0);
 
                     for (int i = dataStart; i < dataStart+ dataStride*numItems ; i+= dataStride){
@@ -299,12 +324,30 @@ ray traceRay(ray mainRay){
                     }
 
                     break;
+                case 2:// spheres
+                    // data stride should be 2
+                    dist = 65535;
+                    for (int i = dataStart; i < dataStart+ dataStride*numItems ; i+= dataStride){
+                        sphere newSphere;
+
+                        newSphere.dim = bvhData.data[i];
+                        int mindx = int(bvhData.data[i+1].x);
+
+                        float newdist = intersectSphere(mainRay, newSphere);
+                        if (newdist < dist){
+                            normal = normalSphere(mainRay,newdist,newSphere.dim.xyz);
+                            newCol = m.colAndR[mindx].xyz;
+                            emmision = m.emmision[mindx].xyz;
+                            roughness = m.colAndR[mindx].w;
+                        }
+                        dist = abs(min(dist,newdist));
+                    }
+
+                    break;
                 //default:
                     
             }
         }
-
-        
     }
 
 
@@ -357,7 +400,7 @@ void main(){
 
     vec3 colour = vec3(0);
 
-    int numRays = 16;
+    int numRays = 64;
 
     for (int i = 0; i < numRays; i++){
         mainray.start = state.pos;//vec3(-2,-5,-5);
@@ -374,7 +417,7 @@ void main(){
         newdir = vec3(cos(theta)*mainray.dir[0]-sin(theta)*mainray.dir[2],mainray.dir[1],sin(theta)*mainray.dir[0]+cos(theta)*mainray.dir[2]);
         mainray.dir = newdir;
 
-        for (int itr = 0; itr < 3; itr++){
+        for (int itr = 0; itr < 6; itr++){
 
             mainray = traceRay(mainray);
             if (length(mainray.absorbsion) < 0.01){
