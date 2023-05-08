@@ -23,12 +23,13 @@ layout (binding = 0, rgba16) uniform writeonly image2D outputImage;
 layout (binding = 1, rgba16) uniform readonly image2D lastOutputImage;
 
 layout (binding = 2) uniform computeState{
+    vec3 pos;
+    vec2 angles;
     vec2 screenExtent;
     int frame;
     int numSpheres;
     int numTriangles;
     int numRootBVs;
-    vec3 pos;
 } state;
 
 layout(binding = 3) uniform spheres{
@@ -57,7 +58,7 @@ layout(binding = 6) uniform verticies{
 
 layout(binding = 7) uniform bvh{
     // a large block of data
-    vec4 data[64];
+    vec4 data[256];
 } bvhData;
 
 struct ray{
@@ -294,7 +295,7 @@ ray traceRay(ray mainRay){
                         tri.v2 = bvhData.data[int(bvhData.data[i].y)].xyz;
                         tri.v3 = bvhData.data[int(bvhData.data[i].z)].xyz;
                         vec3 n = normalTriangle(tri);
-                        if (dot(n,mainRay.dir)< 0){
+                        if (dot(n,mainRay.dir) > 0){ // blender format is different to my cube
                             continue;
                         }
 
@@ -326,7 +327,6 @@ ray traceRay(ray mainRay){
                     break;
                 case 2:// spheres
                     // data stride should be 2
-                    dist = 65535;
                     for (int i = dataStart; i < dataStart+ dataStride*numItems ; i+= dataStride){
                         sphere newSphere;
 
@@ -409,11 +409,11 @@ void main(){
         mainray.absorbsion = vec3(1.0);
 
 
-        float phi = 0.5;
+        float phi = state.angles[0];
         vec3 newdir = vec3(mainray.dir[0],cos(phi)*mainray.dir[1]+sin(phi)*mainray.dir[2],-sin(phi)*mainray.dir[1]+cos(phi)*mainray.dir[2]);
         mainray.dir = newdir;
 
-        float theta = -0.8;
+        float theta = state.angles[1];
         newdir = vec3(cos(theta)*mainray.dir[0]-sin(theta)*mainray.dir[2],mainray.dir[1],sin(theta)*mainray.dir[0]+cos(theta)*mainray.dir[2]);
         mainray.dir = newdir;
 

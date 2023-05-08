@@ -34,7 +34,7 @@ const int MAX_FRAMES_IN_FLIGHT = 2;
 int currentFrame = 0;
 int frame = 0;
 
-const int numSpheres = 6;
+const int numSpheres = 0;
 const int numTriangles = 0;
 const int numRootBVs = 1;
 
@@ -170,16 +170,17 @@ struct verticies {
 
 struct bvh{
     //
-    alignas(16) glm::vec4 data[64];
+    alignas(16) glm::vec4 data[256];
 };
 
 struct computeState{
+    alignas(16) glm::vec3 pos;
+    alignas(8) glm::vec2 angles;
     alignas(8) glm::vec2 screenExtent;
     alignas(4) glm::ivec1 x;
     alignas(4) glm::ivec1 numSpheres;
     alignas(4) glm::ivec1 numTriangles;
     alignas(4) glm::ivec1 numRootBVs;
-    alignas(16) glm::vec3 pos;
 };
 
 struct Vertex{
@@ -349,6 +350,9 @@ private:
 };
 
 std::vector<Model> models;
+
+bvh mainBvhData;
+bool mainBvhNeedGenerating = true;
 
 
 int main() {
@@ -2009,6 +2013,166 @@ void mainLoop(){
     vkDeviceWaitIdle(logicalDevice);
 }
 
+void createBVH(){
+
+    for (int i = 0; i < 256; i++){// clear data
+        mainBvhData.data[i] = glm::vec4(0,0,0,0);
+    }
+    // each of first 12n floats are root nodes
+    // float 1: data start
+    // float 2: data numitems
+    // float 3: data stride
+    // float 4: data type
+    // float 5-7: mins
+    // float 9-11: maxes
+
+    std::vector<glm::vec4> mins;
+    std::vector<glm::vec4> maxes;
+
+    for (int i = 0; i < 16; i++){// a bunch of spheres
+        mainBvhData.data[64+i*2] = glm::vec4(2.5+(i%4)*2/3.0,((i/4)%2)-0.5,i/8-0.5,0.25);
+        mainBvhData.data[64+i*2+1] = glm::vec4(i%6,0,0,0); // the 0s dont matter unused data
+    }
+    mins.push_back(glm::vec4(65536,65536,65536,0));
+    maxes.push_back(glm::vec4(-65536,-65536,-65536,0));
+    for (int i = 0; i < 16; i++){
+        for (int j = 0; j < 3; j++){
+            if (mainBvhData.data[64+i*2][j]-mainBvhData.data[64+i*2][3] < mins[0][j]){
+                mins[0][j] = mainBvhData.data[64+i*2][j]-mainBvhData.data[64+i*2][3];
+            }
+            if (mainBvhData.data[64+i*2][j]+mainBvhData.data[64+i*2][3] > maxes[0][j]){
+                maxes[0][j] = mainBvhData.data[64+i*2][j]+mainBvhData.data[64+i*2][3];
+            }
+        }
+    }
+
+    std::string vertstring;
+    std::string facestring;
+    std::vector<glm::vec4> verts;
+    std::vector<std::vector<int>> faces;
+    std::fstream file;
+    std::vector<std::string> lines;
+    std::string line;
+    file.open("space_ship_model.txt",std::fstream::in);
+    while (std::getline(file,line)){
+        lines.push_back(line);
+    }
+    vertstring = lines[0];
+    facestring = lines[1];// assumes that there are 2 lines not validated
+
+    for (int i = 0; i < vertstring.length()-2; i++){
+        while (vertstring[i] != '('){// find next thing
+            i++;
+        }
+        glm::vec4 vertPos = glm::vec4(0);
+        for (int j = 0; j < 3; j++){
+            std::string currentNumber = "";
+            i++;
+            while (vertstring[i] != ',' && vertstring[i] != ')'){
+                if (vertstring[i] != ' '){
+                    currentNumber += vertstring[i];
+                }
+                i++;
+            }
+            vertPos[j] = std::stof(currentNumber);
+        }
+        // transformation from blender to vulkan coords
+        float temp = vertPos[1];
+        vertPos[1] = -vertPos[2];
+        vertPos[2] = temp;
+        verts.push_back(vertPos);
+    }
+
+    for (int i = 0; i < facestring.length()-2; i++){
+        while (facestring[i] != '[' || facestring[i+1] == '['){// find next thing
+            i++;
+        }
+        std::vector<int> inds;
+        for (int j = 0; j < 4; j++){
+            std::string currentNumber = "";
+            i++;
+            while (facestring[i] != ',' && facestring[i] != ']'){
+                if (facestring[i] != ' '){
+                    currentNumber += facestring[i];
+                }
+                i++;
+            }
+            inds.push_back(std::stoi(currentNumber));
+        }
+        faces.push_back(inds);
+    }
+
+    glm::vec4 min = glm::vec4(65536,65536,65536,0);
+    glm::vec4 max = glm::vec4(-65536,-65536,-65536,0);
+    for (int i = 0; i < verts.size(); i++){
+        mainBvhData.data[96+i] = verts[i];
+        for (int j = 0; j < 3; j++){
+            if (verts[i][j] < min[j]){
+                min[j] = verts[i][j];
+            }
+            if (verts[i][j] > max[j]){
+                max[j] = verts[i][j];
+            }
+        }
+    }
+    mins.push_back(min);
+    maxes.push_back(max);
+
+    int counter = 0;
+    for (int i = 0; i < faces.size(); i++){
+        for (int j = 0; j < faces[i].size()-2; j++){// for each triangle in the polygon
+            glm::vec4 face = glm::vec4(i % 6);
+            face[0] = faces[i][0];
+            for (int k = 1; k < 3; k++){
+                face[k] = faces[i][(j+k)%faces[i].size()];
+            }
+            std::cout << face[0] << " " << face[1] << " " << face[2] << "\n";
+            mainBvhData.data[counter+128] = face+glm::vec4(96,96,96,0);
+            counter++;
+        }
+    }
+
+    
+
+
+    glm::vec4 totalmins = glm::vec4(65536,65536,65536,0);
+    glm::vec4 totalmaxes = glm::vec4(-65536,-65536,-65536,0);
+
+    for (int i = 0; i < mins.size(); i++){
+        for (int j = 0; j < 3; j++){
+            if (mins[i][j] < totalmins[j]){
+                totalmins[j] = mins[i][j];
+            }
+        }
+    }
+    for (int i = 0; i < maxes.size(); i++){
+        for (int j = 0; j < 3; j++){
+            if (maxes[i][j] > totalmaxes[j]){
+                totalmaxes[j] = maxes[i][j];
+            }
+        }
+    }
+
+    mainBvhData.data[0] = glm::vec4(3,2,3,0); // start at 3 , 1 items , 3 vec4 stride, type is another bounding volume
+    mainBvhData.data[1] = totalmins;
+    mainBvhData.data[2] = totalmaxes;
+
+    mainBvhData.data[3] = glm::vec4(64,16,2,2); // start at 64 , 16 items , 2 vec4 stride, type is sphere
+    mainBvhData.data[4] = mins[0];
+    mainBvhData.data[5] = maxes[0];
+
+    mainBvhData.data[6] = glm::vec4(128,counter,1,1); // model
+    mainBvhData.data[7] = mins[1];
+    mainBvhData.data[8] = maxes[1];
+
+    mainBvhNeedGenerating = false;
+
+    for (int i = 0; i < 256; i++){
+        std::cout << i << "; " << mainBvhData.data[i][0] << " " << mainBvhData.data[i][1] << " " << mainBvhData.data[i][2] << " " << mainBvhData.data[i][3] << "\n";
+    }
+
+}
+
 void updateUniformBuffer(uint32_t currentImage){
     UniformBufferObject ubo{};
     ubo.model = glm::rotate(glm::mat4(1.0f),frame*0.001f,glm::vec3(0.0f,0.0f,1.0f));
@@ -2025,12 +2189,13 @@ void updateUniformBuffer(uint32_t currentImage){
 
     computeState state;
     float fov = 1.;
+    state.pos = glm::vec3(-3,-15,-15);
+    state.angles = glm::vec2(0.8,-0.2);
     state.screenExtent = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
     state.x = glm::ivec1(frame);
     state.numSpheres = glm::ivec1(numSpheres);
     state.numTriangles = glm::ivec1(numTriangles);
     state.numRootBVs = glm::ivec1(numRootBVs);
-    state.pos = glm::vec3(-2-frame*0.002,-5,-5);
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*2 +currentImage], &state, sizeof(state));
 
     spheres s;
@@ -2045,7 +2210,7 @@ void updateUniformBuffer(uint32_t currentImage){
     s.dims[4] = glm::vec4(0,0,80,45);
     s.dims[5] = glm::vec4(0,0,2,0.1);
 
-    for (int i = 0; i < numSpheres/4; i++){
+    for (int i = 0; i < numSpheres/4+1; i++){
         s.mats[i] = glm::ivec4(4*(i%2),4*(i%2)+1,4*(i%2)+2,4*(i%2)+3);
     }
 
@@ -2120,79 +2285,12 @@ void updateUniformBuffer(uint32_t currentImage){
 
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*6 +currentImage], &v, sizeof(v));
 
-    bvh bvhdata;
-    for (int i = 0; i < 64; i++){
-        bvhdata.data[i] = glm::vec4(0,0,0,0);
-    }
-
-    // each of first 12n floats are root nodes
-    // float 1: data start
-    // float 2: data numitems
-    // float 3: data stride
-    // float 4: data type
-    // float 5-7: mins
-    // float 9-11: maxes
-
-    for (int j = 0; j < 12; j++){
-        bvhdata.data[16+j] = glm::vec4(i.indx[j]) + glm::vec4(32,32,32,0);// as offset is 32 for vertex data
-    }
-
-    // get AABB
-    glm::vec4 mins = glm::vec4(65536,65536,65536,0);
-    glm::vec4 maxes = glm::vec4(-65536,-65536,-65536,0);
-    for (int i = 0; i < 8; i++){
-        bvhdata.data[32+i] = v.verts[i];
-        for (int j = 0; j < 3; j++){
-            if (v.verts[i][j] < mins[j]){
-                mins[j] = v.verts[i][j];
-            }
-            if (v.verts[i][j] > maxes[j]){
-                maxes[j] = v.verts[i][j];
-            }
-        }
-    }
-
-    for (int i = 0; i < 2; i++){
-        bvhdata.data[16+12+i*2] = glm::vec4(2.5+i,0,0,0.25);
-        bvhdata.data[16+12+i*2+1] = glm::vec4(i,0,0,0); // the 0s dont matter unused data
-    }
-    glm::vec4 mins2 = glm::vec4(65536,65536,65536,0);
-    glm::vec4 maxes2 = glm::vec4(-65536,-65536,-65536,0);
-    for (int i = 0; i < 2; i++){
-        for (int j = 0; j < 3; j++){
-            if (bvhdata.data[16+12+i*2][j]-bvhdata.data[16+12+i*2][3] < mins2[j]){
-                mins2[j] = bvhdata.data[16+12+i*2][j]-bvhdata.data[16+12+i*2][3];
-            }
-            if (bvhdata.data[16+12+i*2][j]+bvhdata.data[16+12+i*2][3] > maxes2[j]){
-                maxes2[j] = bvhdata.data[16+12+i*2][j]+bvhdata.data[16+12+i*2][3];
-            }
-        }
-    }
-    glm::vec4 totalmins = mins;
-    glm::vec4 totalmaxes = maxes;
-    for (int i = 0; i < 3; i++){
-        if (mins2[i] < totalmins[i]){
-            totalmins[i] = mins2[i];
-        }
-        if (maxes2[i] > totalmaxes[i]){
-            totalmaxes[i] = maxes2[i];
-        }
-    }
-
-    bvhdata.data[0] = glm::vec4(3,2,3,0); // start at 3 , 2 items , 3 vec4 stride, type is another bounding volume
-    bvhdata.data[1] = totalmins;
-    bvhdata.data[2] = totalmaxes;
-
-    bvhdata.data[3] = glm::vec4(16,12,1,1); // start at 16 , 12 items , 1 vec4 stride, type is indexed triangle
-    bvhdata.data[4] = mins;
-    bvhdata.data[5] = maxes;
-
-    bvhdata.data[6] = glm::vec4(16+12,2,2,2); // start at 28 (after triangles) , 2 items , 2 vec4 stride, type is sphere
-    bvhdata.data[7] = mins2;
-    bvhdata.data[8] = maxes2;
     
+    if (mainBvhNeedGenerating){
+        createBVH();
+    }
     
-    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*7 +currentImage], &bvhdata, sizeof(bvhdata));
+    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*7 +currentImage], &mainBvhData, sizeof(mainBvhData));
 }
 
 void drawFrame(){
