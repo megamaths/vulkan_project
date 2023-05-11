@@ -58,7 +58,7 @@ layout(binding = 6) uniform verticies{
 
 layout(binding = 7) uniform bvh{
     // a large block of data
-    vec4 data[256];
+    vec4 data[512];
 } bvhData;
 
 struct ray{
@@ -400,7 +400,7 @@ void main(){
 
     vec3 colour = vec3(0);
 
-    int numRays = 64;
+    int numRays = 16;
 
     for (int i = 0; i < numRays; i++){
         mainray.start = state.pos;//vec3(-2,-5,-5);
@@ -430,7 +430,7 @@ void main(){
 
     vec3 sampleColour = imageLoad(lastOutputImage, xy_int).rgb;
 
-    float keepOld = min(state.frame/float(1+state.frame),0.75);
+    float keepOld = min(state.frame/float(1+state.frame),0.975);
 
     colour = (sampleColour*keepOld+colour*(1-keepOld));
     colour = abs(colour);

@@ -168,9 +168,10 @@ struct verticies {
     alignas(16) glm::vec4 verts[16];
 };
 
+const int bvhSize = 512;
 struct bvh{
     //
-    alignas(16) glm::vec4 data[256];
+    alignas(16) glm::vec4 data[bvhSize];
 };
 
 struct computeState{
@@ -350,10 +351,49 @@ private:
 };
 
 std::vector<Model> models;
-
-bvh mainBvhData;
 bool mainBvhNeedGenerating = true;
 
+class bvhDataManager{
+public:
+    bvhDataManager(){
+        for (int i = 0; i < bvhSize; i++){
+            bvhData.data[i] = glm::vec4(0);
+            dataAlloc[i] = -1;
+        }
+    }
+
+    // change a length of dataAlloc to set type can be used to dealloc
+    void allocateMem(int start, int length, int type){
+        if (start + length > bvhSize){
+            length = bvhSize-start;
+        }
+        for (int i = 0; i < length; i++){
+            dataAlloc[i+start] = type;
+        }
+    }
+
+    int findUnAllocSpace(int length){
+        int consecutive = 0;
+        for (int i = 0; i < bvhSize; i++){
+            if (dataAlloc[i] == -1){
+                consecutive++;
+            }
+            else{
+                consecutive = 0;
+            }
+
+            if (consecutive == length){
+                return i-length+1;
+            }
+        }
+        return -1;
+    }
+
+    bvh bvhData;
+    int dataAlloc[bvhSize];
+};
+
+bvhDataManager mainBvhDM;
 
 int main() {
     initWindow();
@@ -2013,10 +2053,217 @@ void mainLoop(){
     vkDeviceWaitIdle(logicalDevice);
 }
 
-void createBVH(){
+// takes a sub bvh and splits it if nessisary
+void improveBVH(int bvhLoc, int maxSplits){
+    if (maxSplits < 2){
+        maxSplits = 2;
+    }
 
-    for (int i = 0; i < 256; i++){// clear data
-        mainBvhData.data[i] = glm::vec4(0,0,0,0);
+
+    glm::vec4 subBvh0 = mainBvhDM.bvhData.data[bvhLoc+0];
+    glm::vec4 subBvh1 = mainBvhDM.bvhData.data[bvhLoc+1];
+    glm::vec4 subBvh2 = mainBvhDM.bvhData.data[bvhLoc+2];
+
+
+    int start = subBvh0[0];
+    int numItems = subBvh0[1];
+    int stride = subBvh0[2];
+    int type = subBvh0[3];
+
+    if (numItems <= maxSplits){
+        if (type == 0){// bv
+            for (int i = 0; i < numItems; i++){
+                improveBVH(start+stride*i,maxSplits);
+            }
+        }
+        return;
+    }
+
+
+
+
+    std::vector<glm::vec3> mins;
+    std::vector<glm::vec3> maxes;
+    std::vector<glm::vec3> mids;
+    std::vector<int> id;
+    for (int i = 0; i < numItems; i++){
+        glm::vec3 min;
+        glm::vec3 max;
+        switch (type)
+        {
+        case 0://bvh
+            min = mainBvhDM.bvhData.data[start+i*stride + 1];
+            max = mainBvhDM.bvhData.data[start+i*stride + 2];
+            mins.push_back(min);
+            maxes.push_back(max);
+            mids.push_back((min+max)/glm::vec3(2.0));
+            id.push_back(i);
+            break;
+
+        case 1://triangle
+            min = glm::vec3(65536);
+            max = glm::vec3(-65536);
+            for (int j = 0; j < 3; j++){
+                for (int k = 0; k < 3; k++){
+                    float val = mainBvhDM.bvhData.data[int(mainBvhDM.bvhData.data[start+i*stride][j])][k];
+                    if (val < min[k]){
+                        min[k] = val;
+                    }
+                    if (val > max[k]){
+                        max[k] = val;
+                    }
+                }
+            }
+            mins.push_back(min);
+            maxes.push_back(max);
+            mids.push_back((min+max)/glm::vec3(2.0));
+            id.push_back(i);
+            break;
+
+        case 2://sphere
+            min = glm::vec3(mainBvhDM.bvhData.data[start+i*stride]) - glm::vec3(mainBvhDM.bvhData.data[start+i*stride][3]);
+            max = glm::vec3(mainBvhDM.bvhData.data[start+i*stride]) + glm::vec3(mainBvhDM.bvhData.data[start+i*stride][3]);
+            mins.push_back(min);
+            maxes.push_back(max);
+            mids.push_back((min+max)/glm::vec3(2.0));
+            id.push_back(i);
+            break;
+        
+        default:
+            break;
+        }
+    }
+
+
+    int bD = 0;// biggest Dimension width length depth (0,1,2)
+    for (int i = 1; i < 3; i++){
+        if (subBvh2[i]-subBvh1[i] > subBvh2[bD]-subBvh1[bD]){
+            bD = i;
+        }
+    }
+
+    while(true){// bubble sort as if slow enough that this matters i will have other problems
+        bool flag = false;
+        for (int i = 0; i < numItems-1; i++){
+            if (mids[i][bD] > mids[i+1][bD]){
+                flag = true;
+                glm::vec3 temp = mids[i];
+                mids[i] = mids[i+1];
+                mids[i+1] = temp;
+
+                temp = mins[i];
+                mins[i] = mins[i+1];
+                mins[i+1] = temp;
+                
+                temp = maxes[i];
+                maxes[i] = maxes[i+1];
+                maxes[i+1] = temp;
+                
+                int tempi = id[i];
+                id[i] = id[i+1];
+                id[i+1] = tempi;
+            }
+        }
+        if (!flag){
+            break;
+        }
+    }
+
+    bvh copyBvhData;
+    for (int i = 0; i < bvhSize; i++){
+        copyBvhData.data[i] = mainBvhDM.bvhData.data[i];
+    }
+
+    for (int i = 0; i < numItems; i++){
+        for (int j = 0; j < stride; j++){
+            copyBvhData.data[start+ i*stride + j] = mainBvhDM.bvhData.data[start+ id[i]*stride + j];
+        }
+    }
+
+    for (int i = 0; i < bvhSize; i++){
+        mainBvhDM.bvhData.data[i] = copyBvhData.data[i];
+    }
+
+    bool endNode = false;
+    if (numItems < 2*maxSplits){
+        endNode = true;
+    }
+
+
+    if (endNode){
+        return;
+    }
+    int numSubrootNodes;
+    if (numItems < maxSplits*maxSplits){
+        numSubrootNodes = std::ceil(sqrt(numItems));
+        numSubrootNodes = std::ceil(numItems/float(numSubrootNodes));
+    }
+    else{
+        numSubrootNodes = maxSplits;
+    }
+
+    std::vector<int> starts;
+    std::vector<int> lengths;
+    int cummulativeLen = 0;
+    for (int i = 0; i < numSubrootNodes; i++){
+        int thisLength = numItems/numSubrootNodes;
+        if (numItems-thisLength*numSubrootNodes > i){
+            thisLength++;
+        }
+        int thisStart = cummulativeLen;
+        cummulativeLen += thisLength;
+        starts.push_back(thisStart);
+        lengths.push_back(thisLength);
+    }
+
+    int newBVLoc = mainBvhDM.findUnAllocSpace(3*numSubrootNodes);
+    if (newBVLoc == -1){
+        std::cout << "no space in BV data for optimisation\n";
+        return;
+    }
+    mainBvhDM.allocateMem(newBVLoc,3*numSubrootNodes,0);
+    for (int i = 0; i < numSubrootNodes; i++){
+        glm::vec4 thisMin = glm::vec4(65536);
+        glm::vec4 thisMax = glm::vec4(-65536);
+        for (int j = 0; j < lengths[i]; j++){
+            for (int k = 0; k < 3; k++){
+                if (mins[starts[i]+j][k] < thisMin[k]){
+                    thisMin[k] = mins[starts[i]+j][k];
+                }
+                if (maxes[starts[i]+j][k] > thisMax[k]){
+                    thisMax[k] = maxes[starts[i]+j][k];
+                }
+            }
+        }
+        mainBvhDM.bvhData.data[newBVLoc + 3*i] = glm::vec4(start + starts[i]*stride, lengths[i], stride, type);
+        mainBvhDM.bvhData.data[newBVLoc + 3*i+1] = glm::vec4(thisMin);
+        mainBvhDM.bvhData.data[newBVLoc + 3*i+2] = glm::vec4(thisMax);
+    }
+
+
+    mainBvhDM.bvhData.data[bvhLoc][0] = newBVLoc;// new start to sub bvs
+    mainBvhDM.bvhData.data[bvhLoc][1] = numSubrootNodes;// new legnth to num sub bvs
+    mainBvhDM.bvhData.data[bvhLoc][2] = 3;// new stride to 3
+    mainBvhDM.bvhData.data[bvhLoc][3] = 0;// new type to bvs
+
+
+    for (int i = 0; i < numSubrootNodes; i++){
+        improveBVH(newBVLoc+3*i,maxSplits);
+        //std::cout << newBVLoc+3*i << "hi\n";
+    }
+    std::cout << "donebranch\n";
+    std::cout << numSubrootNodes << "\n";
+}
+
+void createBVH(){
+    // allocate first bit
+    mainBvhDM.allocateMem(0,12,0);
+
+
+    int sphereLoc = 64;
+
+    for (int i = 0; i < bvhSize; i++){// clear data
+        mainBvhDM.bvhData.data[i] = glm::vec4(0,0,0,0);
     }
     // each of first 12n floats are root nodes
     // float 1: data start
@@ -2029,19 +2276,20 @@ void createBVH(){
     std::vector<glm::vec4> mins;
     std::vector<glm::vec4> maxes;
 
+    mainBvhDM.allocateMem(64,16*2,2);
     for (int i = 0; i < 16; i++){// a bunch of spheres
-        mainBvhData.data[64+i*2] = glm::vec4(2.5+(i%4)*2/3.0,((i/4)%2)-0.5,i/8-0.5,0.25);
-        mainBvhData.data[64+i*2+1] = glm::vec4(i%6,0,0,0); // the 0s dont matter unused data
+        mainBvhDM.bvhData.data[64+i*2] = glm::vec4(2.5+(i%4)*2/3.0,((i/4)%2)-0.5,i/8-0.5,0.25);
+        mainBvhDM.bvhData.data[64+i*2+1] = glm::vec4(i%6,0,0,0); // the 0s dont matter unused data
     }
     mins.push_back(glm::vec4(65536,65536,65536,0));
     maxes.push_back(glm::vec4(-65536,-65536,-65536,0));
     for (int i = 0; i < 16; i++){
         for (int j = 0; j < 3; j++){
-            if (mainBvhData.data[64+i*2][j]-mainBvhData.data[64+i*2][3] < mins[0][j]){
-                mins[0][j] = mainBvhData.data[64+i*2][j]-mainBvhData.data[64+i*2][3];
+            if (mainBvhDM.bvhData.data[64+i*2][j]-mainBvhDM.bvhData.data[64+i*2][3] < mins[0][j]){
+                mins[0][j] = mainBvhDM.bvhData.data[64+i*2][j]-mainBvhDM.bvhData.data[64+i*2][3];
             }
-            if (mainBvhData.data[64+i*2][j]+mainBvhData.data[64+i*2][3] > maxes[0][j]){
-                maxes[0][j] = mainBvhData.data[64+i*2][j]+mainBvhData.data[64+i*2][3];
+            if (mainBvhDM.bvhData.data[64+i*2][j]+mainBvhDM.bvhData.data[64+i*2][3] > maxes[0][j]){
+                maxes[0][j] = mainBvhDM.bvhData.data[64+i*2][j]+mainBvhDM.bvhData.data[64+i*2][3];
             }
         }
     }
@@ -2101,11 +2349,12 @@ void createBVH(){
         }
         faces.push_back(inds);
     }
-
+    int vertsLoc = mainBvhDM.findUnAllocSpace(verts.size());
+    mainBvhDM.allocateMem(vertsLoc,verts.size(),3);
     glm::vec4 min = glm::vec4(65536,65536,65536,0);
     glm::vec4 max = glm::vec4(-65536,-65536,-65536,0);
     for (int i = 0; i < verts.size(); i++){
-        mainBvhData.data[96+i] = verts[i];
+        mainBvhDM.bvhData.data[vertsLoc+i] = verts[i];
         for (int j = 0; j < 3; j++){
             if (verts[i][j] < min[j]){
                 min[j] = verts[i][j];
@@ -2118,7 +2367,10 @@ void createBVH(){
     mins.push_back(min);
     maxes.push_back(max);
 
-    int counter = 0;
+
+
+    std::vector<glm::vec4> trifaces;
+
     for (int i = 0; i < faces.size(); i++){
         for (int j = 0; j < faces[i].size()-2; j++){// for each triangle in the polygon
             glm::vec4 face = glm::vec4(i % 6);
@@ -2127,11 +2379,15 @@ void createBVH(){
                 face[k] = faces[i][(j+k)%faces[i].size()];
             }
             std::cout << face[0] << " " << face[1] << " " << face[2] << "\n";
-            mainBvhData.data[counter+128] = face+glm::vec4(96,96,96,0);
-            counter++;
+            trifaces.push_back(face+glm::vec4(vertsLoc,vertsLoc,vertsLoc,0));
         }
     }
 
+    int facesLoc = mainBvhDM.findUnAllocSpace(trifaces.size());
+    mainBvhDM.allocateMem(facesLoc,trifaces.size(),1);
+    for (int i = 0; i < trifaces.size(); i++){
+        mainBvhDM.bvhData.data[facesLoc+i] = trifaces[i];
+    }
     
 
 
@@ -2153,22 +2409,23 @@ void createBVH(){
         }
     }
 
-    mainBvhData.data[0] = glm::vec4(3,2,3,0); // start at 3 , 1 items , 3 vec4 stride, type is another bounding volume
-    mainBvhData.data[1] = totalmins;
-    mainBvhData.data[2] = totalmaxes;
+    mainBvhDM.bvhData.data[0] = glm::vec4(3,2,3,0); // start at 3 , 1 items , 3 vec4 stride, type is another bounding volume
+    mainBvhDM.bvhData.data[1] = totalmins;
+    mainBvhDM.bvhData.data[2] = totalmaxes;
 
-    mainBvhData.data[3] = glm::vec4(64,16,2,2); // start at 64 , 16 items , 2 vec4 stride, type is sphere
-    mainBvhData.data[4] = mins[0];
-    mainBvhData.data[5] = maxes[0];
+    mainBvhDM.bvhData.data[3] = glm::vec4(sphereLoc,16,2,2); // start at 64 , 16 items , 2 vec4 stride, type is sphere
+    mainBvhDM.bvhData.data[4] = mins[0];
+    mainBvhDM.bvhData.data[5] = maxes[0];
 
-    mainBvhData.data[6] = glm::vec4(128,counter,1,1); // model
-    mainBvhData.data[7] = mins[1];
-    mainBvhData.data[8] = maxes[1];
+    mainBvhDM.bvhData.data[6] = glm::vec4(facesLoc,trifaces.size(),1,1); // model
+    mainBvhDM.bvhData.data[7] = mins[1];
+    mainBvhDM.bvhData.data[8] = maxes[1];
 
+    improveBVH(0,2);
     mainBvhNeedGenerating = false;
 
-    for (int i = 0; i < 256; i++){
-        std::cout << i << "; " << mainBvhData.data[i][0] << " " << mainBvhData.data[i][1] << " " << mainBvhData.data[i][2] << " " << mainBvhData.data[i][3] << "\n";
+    for (int i = 0; i < bvhSize; i++){
+        std::cout << i << "; " << mainBvhDM.bvhData.data[i][0] << " " << mainBvhDM.bvhData.data[i][1] << " " << mainBvhDM.bvhData.data[i][2] << " " << mainBvhDM.bvhData.data[i][3] << "\n";
     }
 
 }
@@ -2288,9 +2545,9 @@ void updateUniformBuffer(uint32_t currentImage){
     
     if (mainBvhNeedGenerating){
         createBVH();
+        memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*7 +currentImage], &mainBvhDM.bvhData, sizeof(mainBvhDM.bvhData));
     }
     
-    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*7 +currentImage], &mainBvhData, sizeof(mainBvhData));
 }
 
 void drawFrame(){
