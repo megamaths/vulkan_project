@@ -2255,6 +2255,138 @@ void improveBVH(int bvhLoc, int maxSplits){
     std::cout << numSubrootNodes << "\n";
 }
 
+// only to be used in createBVH
+bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3]){
+    std::fstream file;
+    std::vector<std::string> lines;
+    std::string line;
+    file.open(filePath,std::fstream::in);
+    while (std::getline(file,line)){
+        lines.push_back(line);
+    }
+    file.close();
+    int numVerts = 0;
+    int numFaces = 0;
+    for (int i = 0; i < lines.size(); i++){
+        if (lines[i].length() == 0){
+            continue;
+        }
+        if (lines[i][0] == 'v' && lines[i][1] == ' '){
+            numVerts++;
+        }
+        if (lines[i][0] == 'f' && lines[i][1] == ' '){
+            int numSpaces = 0;
+            for (int j = 0; j < lines[i].length(); j++){
+                if (lines[i][j] == ' '){
+                    numSpaces++;
+                }
+            }
+            numFaces += numSpaces -2;
+        }
+    }
+
+    int vertsLoc = mainBvhDM.findUnAllocSpace(numVerts);
+    if (vertsLoc == -1){
+        return false;
+    }
+    mainBvhDM.allocateMem(vertsLoc,numVerts,3);
+    int facesLoc = mainBvhDM.findUnAllocSpace(numFaces);
+    if (facesLoc == -1){
+        mainBvhDM.allocateMem(vertsLoc,numVerts,-1); // deallocating allocated space as it failed
+        return false;
+    }
+    mainBvhDM.allocateMem(facesLoc,numFaces,1);
+
+    int currentNumVerts = 0;
+    int currentNumFaces = 0;
+    for (int i = 0; i < lines.size(); i++){
+        if (lines[i].length() == 0){
+            continue;
+        }
+        if (lines[i][0] == 'v' && lines[i][1] == ' '){
+            bool started = false;
+            std::string currentNum = "";
+            int numNum = 0;
+            for (int j = 0; j < lines[i].length(); j++){
+                if (lines[i][j] == ' '){
+                    if (started){
+                        mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][numNum] = stof(currentNum);
+                        numNum++;
+                    }
+                    currentNum = "";
+                    started = true;
+                }
+                else{
+                    currentNum += lines[i][j];
+                }
+            }
+            if (numNum == 2){
+                mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][numNum] = stof(currentNum);
+                numNum++;
+            }
+
+            //float temp = mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][1];
+            //mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][1] = -mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][2];
+            //mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][2] = temp;
+            mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][1] = -mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][1];
+
+            currentNumVerts++;
+        }
+
+        if (lines[i][0] == 'f' && lines[i][1] == ' '){
+            bool recording = false;
+            int indxNum = 0;
+            std::string currentNum = "";
+            std::vector<int> faceIndxs;
+            for (int j = 0; j < lines[i].length(); j++){
+                if (lines[i][j] == ' '){
+                    recording = true;
+                    currentNum = "";
+                }
+                else if (lines[i][j] == '/'){
+                    if (recording){
+                        faceIndxs.push_back(stoi(currentNum) + vertsLoc - 1);
+                        recording = false;
+                    }
+                }
+                else if (recording){
+                    currentNum += lines[i][j];
+                }
+            }
+
+            for (int j = 1; j < faceIndxs.size()-1; j++){// split into triangles
+                mainBvhDM.bvhData.data[facesLoc + currentNumFaces][0] = faceIndxs[0];
+                mainBvhDM.bvhData.data[facesLoc + currentNumFaces][1] = faceIndxs[j];
+                mainBvhDM.bvhData.data[facesLoc + currentNumFaces][2] = faceIndxs[j+1];
+                mainBvhDM.bvhData.data[facesLoc + currentNumFaces][3] = i%6;
+                
+                currentNumFaces++;
+            }
+        }
+    }
+
+    retBV[1] = glm::vec4(65536);
+    retBV[2] = glm::vec4(-65536);
+
+    for (int i = 0; i < numVerts; i++){// calc mins and maxes
+        for (int j = 0; j < 3; j++){
+            if (mainBvhDM.bvhData.data[vertsLoc + i][j] < retBV[1][j]){
+                retBV[1][j] = mainBvhDM.bvhData.data[vertsLoc + i][j];
+            }
+            if (mainBvhDM.bvhData.data[vertsLoc + i][j] > retBV[2][j]){
+                retBV[2][j] = mainBvhDM.bvhData.data[vertsLoc + i][j];
+            }
+        }
+    }
+
+    retBV[0][0] = facesLoc;
+    retBV[0][1] = numFaces;
+    retBV[0][2] = 1;
+    retBV[0][3] = 1;
+
+    return true;
+}
+
 void createBVH(){
     // allocate first bit
     mainBvhDM.allocateMem(0,12,0);
@@ -2294,7 +2426,7 @@ void createBVH(){
         }
     }
 
-    std::string vertstring;
+    /*std::string vertstring;
     std::string facestring;
     std::vector<glm::vec4> verts;
     std::vector<std::vector<int>> faces;
@@ -2387,8 +2519,16 @@ void createBVH(){
     mainBvhDM.allocateMem(facesLoc,trifaces.size(),1);
     for (int i = 0; i < trifaces.size(); i++){
         mainBvhDM.bvhData.data[facesLoc+i] = trifaces[i];
+    }*/
+    glm::vec4 retModelVecs[3];
+    retModelVecs[0] = glm::vec4(0);
+    retModelVecs[1] = glm::vec4(0);
+    retModelVecs[2] = glm::vec4(0);
+    if (!loadObjToBVH("space_ship_model.obj",retModelVecs)){
+        throw std::runtime_error("cant load model");
     }
-    
+    mins.push_back(retModelVecs[1]);
+    maxes.push_back(retModelVecs[2]);
 
 
     glm::vec4 totalmins = glm::vec4(65536,65536,65536,0);
@@ -2417,11 +2557,11 @@ void createBVH(){
     mainBvhDM.bvhData.data[4] = mins[0];
     mainBvhDM.bvhData.data[5] = maxes[0];
 
-    mainBvhDM.bvhData.data[6] = glm::vec4(facesLoc,trifaces.size(),1,1); // model
+    mainBvhDM.bvhData.data[6] = retModelVecs[0]; // model
     mainBvhDM.bvhData.data[7] = mins[1];
     mainBvhDM.bvhData.data[8] = maxes[1];
 
-    improveBVH(0,2);
+    //improveBVH(0,2);
     mainBvhNeedGenerating = false;
 
     for (int i = 0; i < bvhSize; i++){

@@ -288,14 +288,14 @@ ray traceRay(ray mainRay){
                     // data stride should be 1
                     //mainRay.colour = vec3(1,0,0);
 
-                    for (int i = dataStart; i < dataStart+ dataStride*numItems ; i+= dataStride){
+                    for (int i = dataStart; i < dataStart+ dataStride*numItems; i+= dataStride){
                         //mainRay.colour = vec3(i/64.0,0,0);
                         triangle tri;
                         tri.v1 = bvhData.data[int(bvhData.data[i].x)].xyz;
                         tri.v2 = bvhData.data[int(bvhData.data[i].y)].xyz;
                         tri.v3 = bvhData.data[int(bvhData.data[i].z)].xyz;
                         vec3 n = normalTriangle(tri);
-                        if (dot(n,mainRay.dir) > 0){ // blender format is different to my cube
+                        if (dot(n,mainRay.dir) < 0){ // blender format is different to my cube some times not all time
                             continue;
                         }
 
@@ -403,7 +403,7 @@ void main(){
     int numRays = 16;
 
     for (int i = 0; i < numRays; i++){
-        mainray.start = state.pos;//vec3(-2,-5,-5);
+        mainray.start = state.pos;
         mainray.dir = normalize(vec3((xy_float+vec2(-0.5,-0.5))*state.screenExtent,1.0));
         mainray.colour = vec3(0.0);
         mainray.absorbsion = vec3(1.0);
