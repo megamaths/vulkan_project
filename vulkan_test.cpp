@@ -143,6 +143,7 @@ struct material {
 struct materials {
     alignas(16) glm::vec4 colAndR[16];
     alignas(16) glm::vec4 emmision[16];
+    alignas(16) glm::vec4 refractionVals[16];
 };
 
 struct triangle {
@@ -2586,8 +2587,8 @@ void updateUniformBuffer(uint32_t currentImage){
 
     computeState state;
     float fov = 1.;
-    state.pos = glm::vec3(-3,-15,-15);
-    state.angles = glm::vec2(0.8,-0.2);
+    state.pos = glm::vec3(3,-5,-5);
+    state.angles = glm::vec2(0.8,0.2);
     state.screenExtent = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
     state.x = glm::ivec1(frame);
     state.numSpheres = glm::ivec1(numSpheres);
@@ -2617,25 +2618,32 @@ void updateUniformBuffer(uint32_t currentImage){
     for (int i = 0; i < 16; i++){
         m.colAndR[i] = glm::vec4(1,0,0,0);
         m.emmision[i] = glm::vec4(1,0,0,0);
+        m.refractionVals[i] = glm::vec4(1,0,0,0);
     }
 
     m.colAndR[0] = glm::vec4(0,1,1,0.8);
     m.emmision[0] = glm::vec4(0,0,0,0);
+    m.refractionVals[0] = glm::vec4(1.3,0.3,0,0);
 
     m.colAndR[1] = glm::vec4(1,1,1,4.8);
     m.emmision[1] = glm::vec4(0,0,0,0);
+    m.refractionVals[1] = glm::vec4(1.3,0,0,0);
 
     m.colAndR[2] = glm::vec4(0,1,0,0.8);
     m.emmision[2] = glm::vec4(0.01,0.01,0.01,0);
+    m.refractionVals[2] = glm::vec4(1.3,0,0,0);
 
-    m.colAndR[3] = glm::vec4(0,0,0,0.8);
+    m.colAndR[3] = glm::vec4(1,1,1,0.8);
     m.emmision[3] = glm::vec4(1,1,0.7,0);
+    m.refractionVals[3] = glm::vec4(1.3,0.5,0,0);
 
     m.colAndR[4] = glm::vec4(1,0.5,0.5,0.0);
     m.emmision[4] = glm::vec4(0,0,0,0);
+    m.refractionVals[4] = glm::vec4(1.3,0,0,0);
 
     m.colAndR[5] = glm::vec4(1,1,1,0.0);
     m.emmision[5] = glm::vec4(2,2,2,0);
+    m.refractionVals[5] = glm::vec4(1.3,0,0,0);
 
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*4 +currentImage], &m, sizeof(m));
 
