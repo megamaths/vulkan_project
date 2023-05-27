@@ -2359,7 +2359,7 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3]){
                 mainBvhDM.bvhData.data[facesLoc + currentNumFaces][0] = faceIndxs[0];
                 mainBvhDM.bvhData.data[facesLoc + currentNumFaces][1] = faceIndxs[j];
                 mainBvhDM.bvhData.data[facesLoc + currentNumFaces][2] = faceIndxs[j+1];
-                mainBvhDM.bvhData.data[facesLoc + currentNumFaces][3] = i%6;
+                mainBvhDM.bvhData.data[facesLoc + currentNumFaces][3] = 0;//i%6;
                 
                 currentNumFaces++;
             }
@@ -2414,6 +2414,9 @@ void createBVH(){
         mainBvhDM.bvhData.data[64+i*2] = glm::vec4(2.5+(i%4)*2/3.0,((i/4)%2)-0.5,i/8-0.5,0.25);
         mainBvhDM.bvhData.data[64+i*2+1] = glm::vec4(i%6,0,0,0); // the 0s dont matter unused data
     }
+    mainBvhDM.bvhData.data[64+8] = glm::vec4(0,6,5,3);
+    mainBvhDM.bvhData.data[64+9] = glm::vec4(5,0,0,0);
+
     mins.push_back(glm::vec4(65536,65536,65536,0));
     maxes.push_back(glm::vec4(-65536,-65536,-65536,0));
     for (int i = 0; i < 16; i++){
@@ -2621,40 +2624,32 @@ void updateUniformBuffer(uint32_t currentImage){
         m.refractionVals[i] = glm::vec4(1,0,0,0);
     }
 
-    m.colAndR[0] = glm::vec4(0,1,1,0.8);
+    m.colAndR[0] = glm::vec4(0,1,1,0.8);// cyan glass
     m.emmision[0] = glm::vec4(0,0,0,0);
-    m.refractionVals[0] = glm::vec4(1.3,0.3,0,0);
+    m.refractionVals[0] = glm::vec4(1.3,0.9,0,0);
 
-    m.colAndR[1] = glm::vec4(1,1,1,4.8);
+    m.colAndR[1] = glm::vec4(1,1,1,4.8);// diffuse gray
     m.emmision[1] = glm::vec4(0,0,0,0);
     m.refractionVals[1] = glm::vec4(1.3,0,0,0);
 
-    m.colAndR[2] = glm::vec4(0,1,0,0.8);
+    m.colAndR[2] = glm::vec4(0,1,0,0.8);// green slight light
     m.emmision[2] = glm::vec4(0.01,0.01,0.01,0);
     m.refractionVals[2] = glm::vec4(1.3,0,0,0);
 
-    m.colAndR[3] = glm::vec4(1,1,1,0.8);
+    m.colAndR[3] = glm::vec4(1,1,1,0.8);// yellow light semi transparent
     m.emmision[3] = glm::vec4(1,1,0.7,0);
     m.refractionVals[3] = glm::vec4(1.3,0.5,0,0);
 
-    m.colAndR[4] = glm::vec4(1,0.5,0.5,0.0);
+    m.colAndR[4] = glm::vec4(1,0.5,0.5,0.0);// reflective redish brown
     m.emmision[4] = glm::vec4(0,0,0,0);
     m.refractionVals[4] = glm::vec4(1.3,0,0,0);
 
-    m.colAndR[5] = glm::vec4(1,1,1,0.0);
+    m.colAndR[5] = glm::vec4(1,1,1,0.0);// light
     m.emmision[5] = glm::vec4(2,2,2,0);
     m.refractionVals[5] = glm::vec4(1.3,0,0,0);
 
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*4 +currentImage], &m, sizeof(m));
 
-    //triangles t;
-    //for (int i = 0; i < 16; i++){
-    //    t.v1[i] = glm::vec4(-i,-i,i*0.2,0);
-    //    t.v2[i] = glm::vec4(0,-i,i*0.2,0);
-    //    t.v3[i] = glm::vec4(-i,0,i*0.2,0);
-    //}
-
-    //memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*5 +currentImage], &t, sizeof(t));
 
     indicies i;
     for (int j = 0; j < 16; j++){

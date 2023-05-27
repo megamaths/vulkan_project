@@ -71,7 +71,7 @@ struct ray{
     // colour absorbsion
     vec3 absorbsion;
 
-    // 1/ speed of light in medium eg 1.3 in water
+    // refractive index
     float mediumN;
 };
 
@@ -439,7 +439,7 @@ void main(){
         newdir = vec3(cos(theta)*mainray.dir[0]-sin(theta)*mainray.dir[2],mainray.dir[1],sin(theta)*mainray.dir[0]+cos(theta)*mainray.dir[2]);
         mainray.dir = newdir;
 
-        for (int itr = 0; itr < 7; itr++){
+        for (int itr = 0; itr < 64; itr++){
 
             mainray = traceRay(mainray);
             if (length(mainray.absorbsion) < 0.01){
