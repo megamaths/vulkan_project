@@ -21,6 +21,7 @@
 #include <array>
 
 
+
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
@@ -34,9 +35,10 @@ const int MAX_FRAMES_IN_FLIGHT = 2;
 int currentFrame = 0;
 int frame = 0;
 
-const int numSpheres = 0;
-const int numTriangles = 0;
-const int numRootBVs = 1;
+const int numRays = 1024*1024;// big enough not too big actual value is 800*608
+const int numSpheres = 16;
+const int numTriangles = 16;
+const int numRootBVs = 0;
 
 
 bool framebufferResized = false;
@@ -132,8 +134,8 @@ struct sphere {
     alignas(16) glm::vec4 dim;
 };
 struct spheres {
-    alignas(16) glm::vec4 dims[16];
-    alignas(16) glm::ivec4 mats[16/4];
+    alignas(16) glm::vec4 dims[numSpheres];
+    alignas(16) glm::ivec4 mats[numSpheres/4];
 };
 
 struct material {
@@ -184,6 +186,21 @@ struct computeState{
     alignas(4) glm::ivec1 numTriangles;
     alignas(4) glm::ivec1 numRootBVs;
 };
+
+struct ray{
+    alignas(16) glm::vec3 dir;
+    alignas(16) glm::vec3 start;
+    // cumalative colour
+    alignas(16) glm::vec3 colour;
+    // colour absorbsion
+    alignas(16) glm::vec3 absorbsion;
+
+    // refractive index
+    alignas(4) float mediumN;
+    // recursion depth
+    alignas(4) glm::ivec1 depth;
+};
+
 
 struct Vertex{
     glm::vec3 pos;
@@ -353,6 +370,7 @@ private:
 
 std::vector<Model> models;
 bool mainBvhNeedGenerating = true;
+bool defautRaysNeedGenerating = true;
 
 class bvhDataManager{
 public:
@@ -399,10 +417,18 @@ bvhDataManager mainBvhDM;
 int main() {
     initWindow();
 
+    std::cout << "initWindow done\n";
+
     initVulkan();
-    
+
+    std::cout << "initVulkan done\n";
+
+std::cout << std::endl;
+
     uint32_t extensionCount = 0;
     vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+
+    std::cout << "enumerate done\n";
 
     std::cout << extensionCount << " extensions supported\n";
 
@@ -421,6 +447,8 @@ int main() {
 
     //Model newModel = Model(verts,inds);
     //models.push_back(newModel);
+
+    std::cout << "starting mainloop\n";
 
     mainLoop();
 
@@ -447,6 +475,7 @@ void initVulkan(){
     pickHardWareDevices();
 
     createLogicalDevice();
+    std::cout<< "made device\n";
 
     createSwapChain();
     createImageViews();
@@ -457,7 +486,7 @@ void initVulkan(){
     createComputeImages();// must be before descriptors made
     transitionImageLayout(computeOutImage, VK_FORMAT_R16G16B16A16_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
     transitionImageLayout(computeLastOutImage, VK_FORMAT_R16G16B16A16_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-
+    std::cout << "made images\n";
 
     createSampler();
 
@@ -465,6 +494,7 @@ void initVulkan(){
     createDescriptorSetLayout();
     createGraphicsPipeline();
 
+    std::cout << "made render pass and pipeline\n";
 
     createDepthResources();
 
@@ -476,15 +506,19 @@ void initVulkan(){
     createDescriptorPool();
     createDescriptorSets();
 
-
+    std::cout << "made descriptors\n";
     createCommandBuffers();
-
+    std::cout << "made commandBuffers\n";
 
 
     createComputeDescriptorSetLayout();
+    std::cout << "DSL\n";
     createComputeDescriptorSets();
+    std::cout << "DS\n";
     createComputeCommandBuffers();
+    std::cout << "CB\n";
     createComputePipeLine();
+    std::cout << "made compute\n";
 
     createSyncObjects();
 }
@@ -523,7 +557,7 @@ void createInstance(){
 
 
     VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
-
+    std::cout << result << "\n";
     if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
         throw std::runtime_error("failed to create instance!");
     }
@@ -752,10 +786,11 @@ void createLogicalDevice(){
     }
 
 
-
+    std::cout << logicalDevice << "\n";
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &logicalDevice) != VK_SUCCESS) {
         throw std::runtime_error("failed to create logical device!");
     }
+    std::cout << logicalDevice << "\n";
 
     vkGetDeviceQueue(logicalDevice, indices.graphicsFamily, 0, &graphicsQueue);
     vkGetDeviceQueue(logicalDevice, indices.presentFamily, 0, &presentQueue);
@@ -1433,7 +1468,7 @@ void createComputeImages(){
 }
 
 void createComputeDescriptorSetLayout(){
-    std::array<VkDescriptorSetLayoutBinding,8> layouts;
+    std::array<VkDescriptorSetLayoutBinding,10> layouts;
     layouts[0].binding = 0;
     layouts[0].descriptorCount = 1;
     layouts[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1481,6 +1516,18 @@ void createComputeDescriptorSetLayout(){
     layouts[7].descriptorCount = 1;
     layouts[7].pImmutableSamplers = nullptr;
     layouts[7].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    layouts[8].binding = 8;
+    layouts[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    layouts[8].descriptorCount = 1;
+    layouts[8].pImmutableSamplers = nullptr;
+    layouts[8].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    layouts[9].binding = 9;
+    layouts[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    layouts[9].descriptorCount = 1;
+    layouts[9].pImmutableSamplers = nullptr;
+    layouts[9].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1557,8 +1604,18 @@ void createComputeDescriptorSets(){
         bufferInfoBVH.offset = 0;
         bufferInfoBVH.range = sizeof(bvh);
 
+        VkDescriptorBufferInfo bufferInfoSSBO{};
+        bufferInfoSSBO.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*8 +i];
+        bufferInfoSSBO.offset = 0;
+        bufferInfoSSBO.range = sizeof(ray)*numRays;
 
-        std::array<VkWriteDescriptorSet, 8> descriptorWrites{};
+        VkDescriptorBufferInfo bufferInfoSSBO2{};
+        bufferInfoSSBO2.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*8 +(i+1)%MAX_FRAMES_IN_FLIGHT];// the next one
+        bufferInfoSSBO2.offset = 0;
+        bufferInfoSSBO2.range = sizeof(ray)*numRays;
+
+
+        std::array<VkWriteDescriptorSet, 10> descriptorWrites{};
 
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = computeDescriptorSets[i];
@@ -1633,6 +1690,24 @@ void createComputeDescriptorSets(){
         descriptorWrites[7].pBufferInfo = &bufferInfoBVH;
 
 
+        descriptorWrites[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[8].dstSet = computeDescriptorSets[i];
+        descriptorWrites[8].dstBinding = 8;
+        descriptorWrites[8].dstArrayElement = 0;
+        descriptorWrites[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        descriptorWrites[8].descriptorCount = 1;
+        descriptorWrites[8].pBufferInfo = &bufferInfoSSBO;
+
+        descriptorWrites[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[9].dstSet = computeDescriptorSets[i];
+        descriptorWrites[9].dstBinding = 9;
+        descriptorWrites[9].dstArrayElement = 0;
+        descriptorWrites[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        descriptorWrites[9].descriptorCount = 1;
+        descriptorWrites[9].pBufferInfo = &bufferInfoSSBO2;
+
+
+
         vkUpdateDescriptorSets(logicalDevice, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
 }
@@ -1652,7 +1727,7 @@ void createComputePipeLine(){
     pipelineLayoutInfo.setLayoutCount = 1;
     pipelineLayoutInfo.pSetLayouts = &computeDescriptorSetLayout;
     
-
+    std::cout << " started\n";
     if (vkCreatePipelineLayout(logicalDevice, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed to create compute pipeline layout!");
     }
@@ -1660,12 +1735,14 @@ void createComputePipeLine(){
     pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     pipelineInfo.layout = computePipelineLayout;
     pipelineInfo.stage = computeShaderStageInfo;
+    std::cout << "continue\n";
+
 
     if (vkCreateComputePipelines(logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline) != VK_SUCCESS) {
         throw std::runtime_error("failed to create compute pipeline!");
     }
 
-
+    std::cout << "near finish\n";
     vkDestroyShaderModule(logicalDevice, computeShaderModule, nullptr);
 }
 
@@ -1796,19 +1873,29 @@ void createIndexBuffer(){
 void createUniformBuffers(){
     VkDeviceSize bufferSize;
 
-    const std::vector<int> numUbos = {1,1,1,1,1,1,1,1};
-    const std::vector<VkDeviceSize> sizeUbos = {sizeof(UniformBufferObject),
+    const std::vector<int> numBuffers = {1,1,1,1,1,1,1,1,1};
+    const std::vector<VkDeviceSize> sizeBuffers = {sizeof(UniformBufferObject),
                                                 sizeof(vecTwo),
                                                 sizeof(computeState),
                                                 sizeof(spheres),
                                                 sizeof(materials),
                                                 sizeof(indicies),
                                                 sizeof(verticies),
-                                                sizeof(bvh)};
+                                                sizeof(bvh),
+                                                sizeof(ray)*numRays};
+    const std::vector<VkBufferUsageFlagBits> usageBuffers = {VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
 
     std::vector<int> cumulativeSum = {0};
-    for (int i = 0; i < numUbos.size(); i++){
-        cumulativeSum.push_back(numUbos[i]*MAX_FRAMES_IN_FLIGHT +cumulativeSum[i]);
+    for (int i = 0; i < numBuffers.size(); i++){
+        cumulativeSum.push_back(numBuffers[i]*MAX_FRAMES_IN_FLIGHT +cumulativeSum[i]);
     }
 
     uniformBuffers.resize(cumulativeSum[cumulativeSum.size()-1]);
@@ -1820,29 +1907,32 @@ void createUniformBuffers(){
     for (int i = 0; i < cumulativeSum[cumulativeSum.size()-1]; i++){
         while (cumulativeSum[index] <= i){
             index++;
-            bufferSize = sizeUbos[index-1];
+            bufferSize = sizeBuffers[index-1];
         }
-        createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
+        createBuffer(bufferSize, usageBuffers[index-1], VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     uniformBuffers[i], uniformBuffersMemory[i]);
 
         vkMapMemory(logicalDevice, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
     }
 }
 
 void createDescriptorPool(){
-    std::array<VkDescriptorPoolSize,3> poolSizes{};
+    std::array<VkDescriptorPoolSize,4> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *8);
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *2);
+    poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[3].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *2);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
 
-    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *11);
+    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *16);
 
     if (vkCreateDescriptorPool(logicalDevice, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor pool!");
@@ -2039,13 +2129,14 @@ void createSyncObjects(){
 
 void mainLoop(){
     int i = 0;
+    std::cout << "starting mainloop";
     while(!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         updateUniformBuffer(currentFrame);
         drawFrame();
-        if (i%100 == 0){
+        //if (i%100 == 0){
             std::cout << i << "hi\n";
-        }
+        //}
         i++;
         //throw std::runtime_error("check");
     }
@@ -2590,8 +2681,8 @@ void updateUniformBuffer(uint32_t currentImage){
 
     computeState state;
     float fov = 1.;
-    state.pos = glm::vec3(3,-5,-5);
-    state.angles = glm::vec2(0.8,0.2);
+    state.pos = glm::vec3(5,-1.6,-5);
+    state.angles = glm::vec2(0.1,0.55);
     state.screenExtent = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
     state.x = glm::ivec1(frame);
     state.numSpheres = glm::ivec1(numSpheres);
@@ -2601,52 +2692,68 @@ void updateUniformBuffer(uint32_t currentImage){
 
     spheres s;
     for (int i = 6; i < numSpheres; i++){
-        s.dims[i] = glm::vec4(i*0.1,0,1,0.1);
+        s.dims[i] = glm::vec4(i*0.1,4,1,0.1);
     }
 
     s.dims[0] = glm::vec4(0,0,4,0.5);
     s.dims[1] = glm::vec4(1,2,5,2.5);
-    s.dims[2] = glm::vec4(8,-6,20,2.5);
-    s.dims[3] = glm::vec4(-8,-8,16,5.5);
-    s.dims[4] = glm::vec4(0,0,80,45);
-    s.dims[5] = glm::vec4(0,0,2,0.1);
+    s.dims[2] = glm::vec4(2.8,-0.6,3,0.5);
+    s.dims[3] = glm::vec4(-2,-2,4,2.0);
+    s.dims[4] = glm::vec4(0,5,90,45);
+    s.dims[5] = glm::vec4(3,0,0,0.5);
 
-    for (int i = 0; i < numSpheres/4+1; i++){
-        s.mats[i] = glm::ivec4(4*(i%2),4*(i%2)+1,4*(i%2)+2,4*(i%2)+3);
+    s.dims[6] = glm::vec4(0,256,0,256.0);
+
+    s.dims[7] = glm::vec4(0.5,-1.0,-1.5,0.75);
+    s.dims[8] = glm::vec4(0.5,-2.0,-1.5,0.5);
+    s.dims[9] = glm::vec4(0.5,-2.7,-1.5,0.3);
+
+    s.dims[10] = glm::vec4(0.7,-2.75,-1.4,0.1);
+    s.dims[11] = glm::vec4(0.7,-2.75,-1.6,0.1);
+
+    for (int i = 0; i < numSpheres/4; i++){
+        s.mats[i] = glm::ivec4(4*(i%2),4*(i%2)+4,4*(i%2)+2,4*(i%2)+3);
     }
+    s.mats[0] = glm::ivec4(0,0,1,5);
+    s.mats[1] = glm::ivec4(4,1,3,0);
+    s.mats[2] = glm::ivec4(0,0,2,2);
 
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*3 +currentImage], &s, sizeof(s));
 
     materials m;
-    for (int i = 0; i < 16; i++){
+    for (int i = 0; i < 16; i++){//default red bright
         m.colAndR[i] = glm::vec4(1,0,0,0);
         m.emmision[i] = glm::vec4(1,0,0,0);
         m.refractionVals[i] = glm::vec4(1,0,0,0);
     }
 
-    m.colAndR[0] = glm::vec4(0,1,1,0.8);// cyan glass
+    m.colAndR[0] = glm::vec4(1,1,1,4.8);// diffuse gray
     m.emmision[0] = glm::vec4(0,0,0,0);
-    m.refractionVals[0] = glm::vec4(1.3,0.9,0,0);
+    m.refractionVals[0] = glm::vec4(1.3,0,0,0);
 
-    m.colAndR[1] = glm::vec4(1,1,1,4.8);// diffuse gray
+    m.colAndR[1] = glm::vec4(0,1,1,0.8);// cyan glass
     m.emmision[1] = glm::vec4(0,0,0,0);
-    m.refractionVals[1] = glm::vec4(1.3,0,0,0);
+    m.refractionVals[1] = glm::vec4(1.8,0.9,0,0);
 
-    m.colAndR[2] = glm::vec4(0,1,0,0.8);// green slight light
-    m.emmision[2] = glm::vec4(0.01,0.01,0.01,0);
+    m.colAndR[2] = glm::vec4(0.1,0.1,0.1,2.0);// green slight light
+    m.emmision[2] = glm::vec4(0.0,0.0,0.0,0);
     m.refractionVals[2] = glm::vec4(1.3,0,0,0);
 
-    m.colAndR[3] = glm::vec4(1,1,1,0.8);// yellow light semi transparent
-    m.emmision[3] = glm::vec4(1,1,0.7,0);
-    m.refractionVals[3] = glm::vec4(1.3,0.5,0,0);
+    m.colAndR[3] = glm::vec4(0,1,0,14.8);// diffuse green
+    m.emmision[3] = glm::vec4(0,0,0,0);
+    m.refractionVals[3] = glm::vec4(1.3,0,0,0);
 
-    m.colAndR[4] = glm::vec4(1,0.5,0.5,0.0);// reflective redish brown
-    m.emmision[4] = glm::vec4(0,0,0,0);
-    m.refractionVals[4] = glm::vec4(1.3,0,0,0);
+    m.colAndR[4] = glm::vec4(1,1,1,0.8);// yellow light semi transparent
+    m.emmision[4] = glm::vec4(1,1,0.7,0);
+    m.refractionVals[4] = glm::vec4(1.3,0.5,0,0);
 
-    m.colAndR[5] = glm::vec4(1,1,1,0.0);// light
-    m.emmision[5] = glm::vec4(2,2,2,0);
+    m.colAndR[5] = glm::vec4(1,0.5,0.5,0.0);// reflective redish brown
+    m.emmision[5] = glm::vec4(0,0,0,0);
     m.refractionVals[5] = glm::vec4(1.3,0,0,0);
+
+    m.colAndR[6] = glm::vec4(1,0.5,0,2.0);// orange
+    m.emmision[6] = glm::vec4(0,0,0,0);
+    m.refractionVals[6] = glm::vec4(1.3,0,0,0);
 
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*4 +currentImage], &m, sizeof(m));
 
@@ -2658,20 +2765,25 @@ void updateUniformBuffer(uint32_t currentImage){
     i.indx[0] = glm::ivec4(0,1,2,0);
     i.indx[1] = glm::ivec4(1,3,2,0);
 
-    i.indx[2] = glm::ivec4(4,6,5,3);
-    i.indx[3] = glm::ivec4(5,6,7,3);
+    i.indx[2] = glm::ivec4(4,6,5,0);
+    i.indx[3] = glm::ivec4(5,6,7,0);
 
-    i.indx[4] = glm::ivec4(0,4,1,4);
-    i.indx[5] = glm::ivec4(4,5,1,4);
+    i.indx[4] = glm::ivec4(0,4,1,0);
+    i.indx[5] = glm::ivec4(4,5,1,0);
 
-    i.indx[6] = glm::ivec4(2,3,6,1);
-    i.indx[7] = glm::ivec4(6,3,7,1);
+    i.indx[6] = glm::ivec4(2,3,6,0);
+    i.indx[7] = glm::ivec4(6,3,7,0);
 
-    i.indx[8] = glm::ivec4(0,2,4,4);
-    i.indx[9] = glm::ivec4(2,6,4,4);
+    i.indx[8] = glm::ivec4(0,2,4,0);
+    i.indx[9] = glm::ivec4(2,6,4,0);
 
-    i.indx[10] = glm::ivec4(1,5,3,2);
-    i.indx[11] = glm::ivec4(3,5,7,2);
+    i.indx[10] = glm::ivec4(1,5,3,0);
+    i.indx[11] = glm::ivec4(3,5,7,0);
+
+    i.indx[12] = glm::ivec4(8,10,9,6);
+    i.indx[13] = glm::ivec4(8,11,10,6);
+    i.indx[14] = glm::ivec4(8,9,11,6);
+    i.indx[15] = glm::ivec4(9,10,11,6);
 
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*5 +currentImage], &i, sizeof(i));
 
@@ -2680,8 +2792,12 @@ void updateUniformBuffer(uint32_t currentImage){
         v.verts[i] = glm::vec4(0,0,0,0);
     }
     for (int i = 0; i < 8; i++){
-        v.verts[i] = glm::vec4(i%2-0.5+5,(i/2)%2-0.5,i/4-0.5,0);
+        v.verts[i] = glm::vec4((i%2)*2-0.5,((i/2)%2)*0.5-0.25,(i/4)*2-2.5,0);
     }
+    v.verts[8] = glm::vec4(1.2,-2.6,-1.5,0);
+    v.verts[9] = glm::vec4(0.7,-2.65,-1.5,0);
+    v.verts[10] = glm::vec4(0.7,-2.55,-1.55,0);
+    v.verts[11] = glm::vec4(0.7,-2.55,-1.45,0);
 
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*6 +currentImage], &v, sizeof(v));
 
@@ -2691,6 +2807,13 @@ void updateUniformBuffer(uint32_t currentImage){
         memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*7 +currentImage], &mainBvhDM.bvhData, sizeof(mainBvhDM.bvhData));
     }
     
+    if (defautRaysNeedGenerating){
+        ray* raySSBO = (ray*) uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*8];// if one is set then others should be set by the gpu
+        for (int i = 0; i < numRays; i++){
+            raySSBO[i].depth = glm::ivec1(-1);
+        }
+        defautRaysNeedGenerating = false;
+    }
 }
 
 void drawFrame(){

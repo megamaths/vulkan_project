@@ -1,5 +1,6 @@
 #version 450
 
+
 struct sphere{
     //xyz is center w is radius
     vec4 dim;
@@ -73,7 +74,17 @@ struct ray{
 
     // refractive index
     float mediumN;
+    // recursion depth
+    int depth;
 };
+
+layout(binding = 8) readonly buffer rays{
+    ray data[];
+} raysIn;
+
+layout(binding = 9) writeonly buffer rays2{
+    ray data[];
+} raysOut;
 
 float interSectAABB(ray testRay, vec3 mins, vec3 maxes){
     vec3 t0 = (mins-testRay.start)/testRay.dir;
@@ -248,7 +259,8 @@ ray traceRay(ray mainRay){
     }
 
 
-    int neededTestingBVs[256];// bvs indexed to in ubo
+    /*int neededTestingBVs[256];// bvs indexed to in ubo
+    neededTestingBVs[0] = 0;
     int endStack = 0;
     // implemented as a stack
 
@@ -257,7 +269,7 @@ ray traceRay(ray mainRay){
         endStack = i;
     }
 
-    for (int i = 0; i < 10000; i++){// effective while but with safty limits
+    //for (int i = 0; i < 1; i++){// effective while but with safty limits
 
         // each of first 12n floats are root nodes
         // float 1: data start
@@ -266,8 +278,8 @@ ray traceRay(ray mainRay){
         // float 4: data type
         // float 5-7: mins
         // float 9-11: maxes
-        if (endStack == -1 || endStack == 256){
-            break;
+        if (endStack == -1 || endStack >= 256){
+        //    break;
             // finished all items in stack or overFlowed
         }
         int index = neededTestingBVs[endStack];
@@ -280,15 +292,23 @@ ray traceRay(ray mainRay){
             int dataStride = int(bvhData.data[index].z);
             //retRay.colour = vec3(bvhData.data[3*index].xyz)/16.0;
             //dist = min(dist,16);
+            int j = 0;
             switch (int(bvhData.data[index].w)){
                 case 0:// another bv
                     // data stride should be 3
-                    for (int i = dataStart; i < dataStart+ dataStride*numItems; i += dataStride){
-                        endStack++;
-                        neededTestingBVs[endStack] = i;
+                    //for (int j = dataStart; j < dataStart+ dataStride*numItems; j += dataStride){
+                    for (j = 0; j < numItems; j++) {
+                        if (endStack+j >= 256 || endStack+j < 0) {
+                            break;
+                        }
+                        //endStack++;
+                        //j = neededTestingBVs[endStack+j];
+                        int indexOfNewItem = endStack + j;
+                        //neededTestingBVs[indexOfNewItem] = dataStart + dataStride * j;
                     }
+                    endStack += numItems;
                     break;
-                case 1:// triangles (indexed)
+                /*case 1:// triangles (indexed)
                     // data stride should be 1
                     //mainRay.colour = vec3(1,0,0);
 
@@ -343,19 +363,20 @@ ray traceRay(ray mainRay){
                         dist = abs(min(dist,newdist));
                     }
 
+                    break;* /
+                default:
                     break;
-                //default:
-                    
             }
         }
-    }
-
+    //}*/
 
 
     if (dist > 65535){ // miss
+        retRay.colour = mainRay.colour + (mainRay.absorbsion)*vec3(0.3,0.3,0.9);// add the voids colour
         retRay.absorbsion = vec3(0);
         return retRay;// ?? as absorbsion is 0 should not try to reflect of the void
     }
+
 
     float roughness = m.colAndR[materialIndex].w;
     vec3 newCol = m.colAndR[materialIndex].xyz;
@@ -371,6 +392,7 @@ ray traceRay(ray mainRay){
         retRay.mediumN = 1;
         normal = -normal;
     }
+
 
 
     // if hit
@@ -416,15 +438,41 @@ void main(){
     vec2 xy_float = vec2(gl_GlobalInvocationID.x / float(size.x), gl_GlobalInvocationID.y / float(size.y));
     setSeed(state.frame*1000000+(xy_int.x*1000+xy_int.y));
 
-
-    ray mainray;
-
     vec3 colour = vec3(0);
 
-    int numRays = 16;
+    int numRays = 1;
+    const int maxDepth = 14;
 
-    for (int i = 0; i < numRays; i++){
+
+    uint rayID = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y*1024;
+    ray mainray;
+    if (raysIn.data[rayID].depth == -1 || raysIn.data[rayID].depth >= maxDepth){// new ray
         mainray.start = state.pos;
+        mainray.dir = normalize(vec3((xy_float+vec2(-0.5,-0.5))*state.screenExtent,1.0));
+        mainray.colour = vec3(0.0);
+        mainray.absorbsion = vec3(1.0);
+        mainray.mediumN = 1.0;
+        mainray.depth = 1;
+
+        float phi = state.angles[0];
+        vec3 newdir = vec3(mainray.dir[0],cos(phi)*mainray.dir[1]+sin(phi)*mainray.dir[2],-sin(phi)*mainray.dir[1]+cos(phi)*mainray.dir[2]);
+        mainray.dir = newdir;
+
+        float theta = state.angles[1];
+        newdir = vec3(cos(theta)*mainray.dir[0]-sin(theta)*mainray.dir[2],mainray.dir[1],sin(theta)*mainray.dir[0]+cos(theta)*mainray.dir[2]);
+        mainray.dir = newdir;
+    }
+    else{
+        mainray.start = raysIn.data[rayID].start;
+        mainray.dir = normalize(raysIn.data[rayID].dir);
+        mainray.colour = raysIn.data[rayID].colour;
+        mainray.absorbsion = raysIn.data[rayID].absorbsion;
+        mainray.mediumN = raysIn.data[rayID].mediumN;
+        mainray.depth = raysIn.data[rayID].depth +1;
+    }
+
+    //for (int i = 0; i < numRays; i++){
+        /*mainray.start = state.pos;
         mainray.dir = normalize(vec3((xy_float+vec2(-0.5,-0.5))*state.screenExtent,1.0));
         mainray.colour = vec3(0.0);
         mainray.absorbsion = vec3(1.0);
@@ -437,24 +485,50 @@ void main(){
 
         float theta = state.angles[1];
         newdir = vec3(cos(theta)*mainray.dir[0]-sin(theta)*mainray.dir[2],mainray.dir[1],sin(theta)*mainray.dir[0]+cos(theta)*mainray.dir[2]);
-        mainray.dir = newdir;
+        mainray.dir = newdir;*/
 
-        for (int itr = 0; itr < 64; itr++){
+        //for (int itr = 0; itr < maxDepth; itr++){
 
             mainray = traceRay(mainray);
             if (length(mainray.absorbsion) < 0.01){
-                break;
+                mainray.depth = -1;// stop
+                //break;
             }
-        }
+            else{
+                mainray.depth += 1;
+            }
+        //}
         colour += mainray.colour /float(numRays);
-    }
+    //}
     //imageStore(outputImage, xy_int, vec4(vec3(1-dist) , 1.0f));
+    raysOut.data[rayID].start = mainray.start;// copy data to other SSBO
+    raysOut.data[rayID].dir = mainray.dir;
+    raysOut.data[rayID].colour = mainray.colour;
+    raysOut.data[rayID].absorbsion = mainray.absorbsion;
+    raysOut.data[rayID].mediumN = mainray.mediumN;
+    raysOut.data[rayID].depth = mainray.depth;
 
-    vec3 sampleColour = imageLoad(lastOutputImage, xy_int).rgb;
 
-    float keepOld = min(state.frame/float(1+state.frame),0.975);
+    if (mainray.depth == -1){
+        vec3 sampleColour = imageLoad(lastOutputImage, xy_int).rgb;
 
-    colour = (sampleColour*keepOld+colour*(1-keepOld));
-    colour = abs(colour);
-    imageStore(outputImage, xy_int, vec4(colour , 1.0f));
+        float keepOld = min(state.frame/float(1+state.frame),0.99);
+
+        colour = (sampleColour*keepOld+colour*(1-keepOld));
+        colour = abs(colour);//*vec3(raysIn.data[gl_GlobalInvocationID.x].mediumN/256.0);
+        imageStore(outputImage, xy_int, vec4(colour , 1.0f));
+    }
+    else{
+        vec3 sampleColour = imageLoad(lastOutputImage, xy_int).rgb;
+        imageStore(outputImage, xy_int, vec4(sampleColour, 1.0f));
+    }
+    //imageStore(outputImage, xy_int, vec4(vec3(mainray.depth*0.0125 + 0.0125),1.0f));
+    //imageStore(outputImage, xy_int, vec4(raysIn.data[rayID].colour,1.0f));
+    //imageStore(outputImage, xy_int, vec4(vec3(length(mainray.absorbsion)*0.5),1.0f));
+    if (raysIn.data[rayID].depth != -1){
+        //imageStore(outputImage, xy_int, vec4(vec3(1.0f,0.0f,0.0f),1.0f));
+    }
+    if (mainray.depth != -1){
+        //imageStore(outputImage, xy_int, vec4(vec3(1.0f,0.0f,1.0f),1.0f));
+    }
 }
