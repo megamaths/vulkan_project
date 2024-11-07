@@ -1,3 +1,10 @@
+
+
+
+
+
+
+
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
@@ -19,7 +26,6 @@
 #include <vector>
 #include <set>
 #include <array>
-
 
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
@@ -243,7 +249,7 @@ const std::vector<uint16_t> indices = {
 
 
 const std::vector<const char *> deviceExtensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
 
@@ -518,11 +524,24 @@ void createInstance(){
 
     glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
-    createInfo.enabledExtensionCount = glfwExtensionCount;
-    createInfo.ppEnabledExtensionNames = glfwExtensions;
+    std::vector<const char*> requiredExtensions;
+
+    for(uint32_t i = 0; i < glfwExtensionCount; i++) {
+        requiredExtensions.emplace_back(glfwExtensions[i]);
+    }
+
+    #if __APPLE__
+    requiredExtensions.emplace_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+    createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    #endif
+
+
+    createInfo.enabledExtensionCount = (uint32_t) requiredExtensions.size();
+    createInfo.ppEnabledExtensionNames = requiredExtensions.data();
 
 
     VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
+    std::cout << result << "\n";
 
     if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
         throw std::runtime_error("failed to create instance!");
@@ -599,6 +618,7 @@ bool validDevice(VkPhysicalDevice device){
     // version supported and other stuff
     VkPhysicalDeviceProperties deviceProperties;
     vkGetPhysicalDeviceProperties(device, &deviceProperties);
+    std::cout << deviceProperties.deviceName << "\n";
 
     // what optional support is there
     VkPhysicalDeviceFeatures deviceFeatures;
@@ -612,6 +632,7 @@ bool validDevice(VkPhysicalDevice device){
     std::cout << indcies.graphicsFamily << " graphic queue\n";
 
     if (!hasNeededExtensions(device)){
+        std::cout << "lacks extentions\n";
         return false;
     }
 
@@ -680,7 +701,12 @@ bool hasNeededExtensions(VkPhysicalDevice device){
     std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
 
     for (const VkExtensionProperties& extension : availableExtensions) {
+        std::cout << extension.extensionName << "\n";
         requiredExtensions.erase(extension.extensionName);
+    }
+
+    for (auto i = requiredExtensions.begin(); i != requiredExtensions.end(); i++){
+        std::cout << "does not have extension " << *i << "\n";
     }
 
     return requiredExtensions.empty();
@@ -789,7 +815,7 @@ void createSwapChain(){
     createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
     QueueStruct indices = findQueues(physicalDevice);
-    uint32_t queueFamilyIndices[] = {indices.graphicsFamily, indices.presentFamily};
+    uint32_t queueFamilyIndices[] = {static_cast<uint32_t>(indices.graphicsFamily), static_cast<uint32_t>(indices.presentFamily)};
 
     if (indices.graphicsFamily != indices.presentFamily) {
         createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
