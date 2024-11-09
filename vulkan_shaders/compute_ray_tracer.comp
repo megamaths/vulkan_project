@@ -27,8 +27,6 @@ layout (binding = 2) uniform computeState{
     vec2 angles;
     vec2 screenExtent;
     int frame;
-    int numSpheres;
-    int numTriangles;
     int numRootBVs;
 } state;
 
@@ -42,25 +40,25 @@ layout(binding = 3) uniform spheres{
 layout(binding = 4) uniform materials{
     //xyz is colour w is roughness
     vec4 colAndR[16];
-    // xyz is emmision w is the refraction n val
+    // xyz is emmision w is not used
     vec4 emmision[16];
     // x n val , y chance zw not used
     vec4 refractionVals[16];
 } m;
 
-layout(binding = 5) uniform indicies{
+layout(binding = 5) readonly buffer indicies{
     // xyz are index for 1 triangle w is mat
-    ivec4 indx[16];
+    ivec4 indx[];
 } inds;
 
-layout(binding = 6) uniform verticies{
+layout(binding = 6) readonly buffer verticies{
     // xyz are vert pos
-    vec4 verts[16];
+    vec4 verts[];
 } verts;
 
-layout(binding = 7) uniform bvh{
+layout(binding = 7) readonly buffer bvh{
     // a large block of data
-    vec4 data[512];
+    vec4 data[];
 } bvhData;
 
 struct ray{
@@ -177,6 +175,10 @@ vec3 randDirection(){
     return normalize(dir);
 }
 
+float randfloat(){
+    return randVal()%256/128.0-1.0;
+}
+
 ray traceRay(ray mainRay){
 
     ray retRay;
@@ -198,55 +200,6 @@ ray traceRay(ray mainRay){
     int materialIndex = 15;
 
     
-
-    for (int i = 0; i < state.numSpheres && i < 16; i++){
-        sphere newSphere;
-
-        newSphere.dim = s.dim[i];
-        int mindx = s.mat[i/4][i%4];
-
-        float newdist = intersectSphere(mainRay, newSphere);
-        if (newdist < dist){
-            normal = normalSphere(mainRay,newdist,newSphere.dim.xyz);
-            materialIndex = mindx;
-        }
-        dist = abs(min(dist,newdist));
-    }
-
-
-    for (int i = 0; i < state.numTriangles && i < 16 ;i++){
-        triangle tri;
-        tri.v1 = verts.verts[inds.indx[i].x].xyz;
-        tri.v2 = verts.verts[inds.indx[i].y].xyz;
-        tri.v3 = verts.verts[inds.indx[i].z].xyz;
-        vec3 n = normalTriangle(tri);
-        if (dot(n,mainRay.dir)< 0){
-            continue;
-        }
-
-        float newdist = intersectTriangle(mainRay, tri);
-        if (newdist < dist){
-
-            int matNum = inds.indx[i].w;
-
-            vec3 pos = mainRay.start + mainRay.dir*newdist;
-            //vec3 n = normalTriangle(tri);
-            vec3 edge0 = tri.v2 - tri.v1;
-            vec3 edge1 = tri.v3 - tri.v2;
-            vec3 edge2 = tri.v1 - tri.v3;
-            vec3 C0 = pos - tri.v1;
-            vec3 C1 = pos - tri.v2;
-            vec3 C2 = pos - tri.v3;
-            vec3 sides = vec3(dot(n, cross(edge0, C0)) , dot(n, cross(edge1, C1)), dot(n, cross(edge2, C2)));
-            normal = normalTriangle(tri);
-            if (dot(normal,mainRay.dir) > 0){
-                normal *= -1;
-            }
-            materialIndex = matNum;
-        }
-        dist = abs(min(dist,newdist));
-    }
-
 
     int neededTestingBVs[256];// bvs indexed to in ubo
     int endStack = 0;
@@ -293,12 +246,11 @@ ray traceRay(ray mainRay){
                     //mainRay.colour = vec3(1,0,0);
 
                     for (int i = dataStart; i < dataStart+ dataStride*numItems; i+= dataStride){
-                        //mainRay.colour = vec3(i/64.0,0,0);
                         triangle tri;
-                        tri.v1 = bvhData.data[int(bvhData.data[i].x)].xyz;
-                        tri.v2 = bvhData.data[int(bvhData.data[i].y)].xyz;
-                        tri.v3 = bvhData.data[int(bvhData.data[i].z)].xyz;
-                        vec3 n = normalTriangle(tri);
+                        tri.v1 = verts.verts[inds.indx[i].x].xyz;
+                        tri.v2 = verts.verts[inds.indx[i].y].xyz;
+                        tri.v3 = verts.verts[inds.indx[i].z].xyz;
+                        //vec3 n = normalTriangle(tri);
                         //if (dot(n,mainRay.dir) < 0){ // blender format is different to my cube some times not all time
                         //    continue;
                         //}
@@ -306,7 +258,7 @@ ray traceRay(ray mainRay){
                         float newdist = intersectTriangle(mainRay, tri);
                         if (newdist < dist){
 
-                            int matNum = int(bvhData.data[i].w);
+                            int matNum = int(inds.indx[i].w);
 
                             //vec3 pos = mainRay.start + mainRay.dir*newdist;
                             //vec3 n = normalTriangle(tri);
@@ -328,17 +280,17 @@ ray traceRay(ray mainRay){
 
                     break;
                 case 2:// spheres
-                    // data stride should be 2
+                    // data stride should be 1 for all normal aplications as I am now indexing into the spheres buffer
                     for (int i = dataStart; i < dataStart+ dataStride*numItems ; i+= dataStride){
                         sphere newSphere;
 
-                        newSphere.dim = bvhData.data[i];
-                        int mindx = int(bvhData.data[i+1].x);
+                        newSphere.dim = s.dim[i];
+                        int matind = int(s.mat[i/4][i%4]);
 
                         float newdist = intersectSphere(mainRay, newSphere);
                         if (newdist < dist){
                             normal = normalSphere(mainRay,newdist,newSphere.dim.xyz);
-                            materialIndex = mindx;
+                            materialIndex = matind;
                         }
                         dist = abs(min(dist,newdist));
                     }
@@ -348,12 +300,14 @@ ray traceRay(ray mainRay){
                     
             }
         }
+        //retRay.colour += vec3(float(i)/1000.0);
     }
 
 
 
     if (dist > 65535){ // miss
-        retRay.absorbsion = vec3(0);
+        retRay.colour += retRay.absorbsion*vec3(0.0,0.0,0.0);// adds the voids colour
+        retRay.absorbsion = vec3(0.0);
         return retRay;// ?? as absorbsion is 0 should not try to reflect of the void
     }
 
@@ -406,7 +360,8 @@ ray traceRay(ray mainRay){
     return retRay;
 }
 
-// work group max size on this computer is 1024 
+// work group max size on desktop is 1024
+// not sure what is on the mac
 layout (local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 void main(){
@@ -422,10 +377,14 @@ void main(){
     vec3 colour = vec3(0);
 
     int numRays = 16;
+    const int max_depth = 16;
 
     for (int i = 0; i < numRays; i++){
+
+        vec2 anti_aliasing = vec2(randfloat()/float(size.x),randfloat()/float(size.y))*1.0;
+
         mainray.start = state.pos;
-        mainray.dir = normalize(vec3((xy_float+vec2(-0.5,-0.5))*state.screenExtent,1.0));
+        mainray.dir = normalize(vec3((xy_float+vec2(-0.5,-0.5)+anti_aliasing)*state.screenExtent,1.0));
         mainray.colour = vec3(0.0);
         mainray.absorbsion = vec3(1.0);
         mainray.mediumN = 1.0;
@@ -439,14 +398,17 @@ void main(){
         newdir = vec3(cos(theta)*mainray.dir[0]-sin(theta)*mainray.dir[2],mainray.dir[1],sin(theta)*mainray.dir[0]+cos(theta)*mainray.dir[2]);
         mainray.dir = newdir;
 
-        for (int itr = 0; itr < 64; itr++){
-
+        int max_itr = 0;
+        for (int itr = 0; itr < max_depth; itr++){
+            max_itr = itr;
             mainray = traceRay(mainray);
             if (length(mainray.absorbsion) < 0.01){
                 break;
             }
         }
         colour += mainray.colour /float(numRays);
+        //colour += float(max_itr)/float(max_depth) /float(numRays);
+        
     }
     //imageStore(outputImage, xy_int, vec4(vec3(1-dist) , 1.0f));
 

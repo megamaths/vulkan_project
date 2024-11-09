@@ -40,8 +40,6 @@ const int MAX_FRAMES_IN_FLIGHT = 2;
 int currentFrame = 0;
 int frame = 0;
 
-const int numSpheres = 0;
-const int numTriangles = 0;
 const int numRootBVs = 1;
 
 
@@ -137,9 +135,11 @@ struct ivecOne {
 struct sphere {
     alignas(16) glm::vec4 dim;
 };
+
+const int spheresSize = 16;
 struct spheres {
-    alignas(16) glm::vec4 dims[16];
-    alignas(16) glm::ivec4 mats[16/4];
+    alignas(16) glm::vec4 dims[spheresSize];
+    alignas(16) glm::ivec4 mats[spheresSize/4];
 };
 
 struct material {
@@ -165,17 +165,19 @@ struct triangles {
 };
 
 
+const int indsSize = 131072;
 struct indicies {
     // xyz are index w is mat
-    alignas(16) glm::ivec4 indx[16];
+    alignas(16) glm::ivec4 indx[indsSize];
 };
 
+const int vertsSize = 65536;
 struct verticies {
     // xyz are pos w is if needed
-    alignas(16) glm::vec4 verts[16];
+    alignas(16) glm::vec4 verts[vertsSize];
 };
 
-const int bvhSize = 512;
+const int bvhSize = 65536;
 struct bvh{
     //
     alignas(16) glm::vec4 data[bvhSize];
@@ -186,8 +188,6 @@ struct computeState{
     alignas(8) glm::vec2 angles;
     alignas(8) glm::vec2 screenExtent;
     alignas(4) glm::ivec1 x;
-    alignas(4) glm::ivec1 numSpheres;
-    alignas(4) glm::ivec1 numTriangles;
     alignas(4) glm::ivec1 numRootBVs;
 };
 
@@ -1491,19 +1491,19 @@ void createComputeDescriptorSetLayout(){
     layouts[4].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     layouts[5].binding = 5;
-    layouts[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    layouts[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     layouts[5].descriptorCount = 1;
     layouts[5].pImmutableSamplers = nullptr;
     layouts[5].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     layouts[6].binding = 6;
-    layouts[6].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    layouts[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     layouts[6].descriptorCount = 1;
     layouts[6].pImmutableSamplers = nullptr;
     layouts[6].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     layouts[7].binding = 7;
-    layouts[7].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    layouts[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     layouts[7].descriptorCount = 1;
     layouts[7].pImmutableSamplers = nullptr;
     layouts[7].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -1560,12 +1560,6 @@ void createComputeDescriptorSets(){
         bufferInfoMats.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*4 +i];
         bufferInfoMats.offset = 0;
         bufferInfoMats.range = sizeof(materials);
-
-
-        //VkDescriptorBufferInfo bufferInfoTris{};
-        //bufferInfoTris.buffer = uniformBuffers[MAX_FRAMES_IN_FLIGHT*5 +i];
-        //bufferInfoTris.offset = 0;
-        //bufferInfoTris.range = sizeof(triangles);
 
 
         VkDescriptorBufferInfo bufferInfoInds{};
@@ -1626,19 +1620,11 @@ void createComputeDescriptorSets(){
         descriptorWrites[4].descriptorCount = 1;
         descriptorWrites[4].pBufferInfo = &bufferInfoMats;
 
-        //descriptorWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        //descriptorWrites[5].dstSet = computeDescriptorSets[i];
-        //descriptorWrites[5].dstBinding = 5;
-        //descriptorWrites[5].dstArrayElement = 0;
-        //descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        //descriptorWrites[5].descriptorCount = 1;
-        //descriptorWrites[5].pBufferInfo = &bufferInfoTris;
-
         descriptorWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[5].dstSet = computeDescriptorSets[i];
         descriptorWrites[5].dstBinding = 5;
         descriptorWrites[5].dstArrayElement = 0;
-        descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         descriptorWrites[5].descriptorCount = 1;
         descriptorWrites[5].pBufferInfo = &bufferInfoInds;
 
@@ -1646,7 +1632,7 @@ void createComputeDescriptorSets(){
         descriptorWrites[6].dstSet = computeDescriptorSets[i];
         descriptorWrites[6].dstBinding = 6;
         descriptorWrites[6].dstArrayElement = 0;
-        descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         descriptorWrites[6].descriptorCount = 1;
         descriptorWrites[6].pBufferInfo = &bufferInfoVerts;
 
@@ -1654,7 +1640,7 @@ void createComputeDescriptorSets(){
         descriptorWrites[7].dstSet = computeDescriptorSets[i];
         descriptorWrites[7].dstBinding = 7;
         descriptorWrites[7].dstArrayElement = 0;
-        descriptorWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         descriptorWrites[7].descriptorCount = 1;
         descriptorWrites[7].pBufferInfo = &bufferInfoBVH;
 
@@ -1822,8 +1808,8 @@ void createIndexBuffer(){
 void createUniformBuffers(){
     VkDeviceSize bufferSize;
 
-    const std::vector<int> numUbos = {1,1,1,1,1,1,1,1};
-    const std::vector<VkDeviceSize> sizeUbos = {sizeof(UniformBufferObject),
+    const std::vector<int> numBuffers = {1,1,1,1,1,1,1,1};
+    const std::vector<VkDeviceSize> sizeBuffers = {sizeof(UniformBufferObject),
                                                 sizeof(vecTwo),
                                                 sizeof(computeState),
                                                 sizeof(spheres),
@@ -1831,10 +1817,19 @@ void createUniformBuffers(){
                                                 sizeof(indicies),
                                                 sizeof(verticies),
                                                 sizeof(bvh)};
+    
+    const std::vector<VkBufferUsageFlagBits> usageBuffers = {VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
 
     std::vector<int> cumulativeSum = {0};
-    for (int i = 0; i < numUbos.size(); i++){
-        cumulativeSum.push_back(numUbos[i]*MAX_FRAMES_IN_FLIGHT +cumulativeSum[i]);
+    for (int i = 0; i < numBuffers.size(); i++){
+        cumulativeSum.push_back(numBuffers[i]*MAX_FRAMES_IN_FLIGHT +cumulativeSum[i]);
     }
 
     uniformBuffers.resize(cumulativeSum[cumulativeSum.size()-1]);
@@ -1846,29 +1841,32 @@ void createUniformBuffers(){
     for (int i = 0; i < cumulativeSum[cumulativeSum.size()-1]; i++){
         while (cumulativeSum[index] <= i){
             index++;
-            bufferSize = sizeUbos[index-1];
+            bufferSize = sizeBuffers[index-1];
         }
-        createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
+        createBuffer(bufferSize, usageBuffers[index-1], VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+                    , uniformBuffers[i], uniformBuffersMemory[i]);
 
         vkMapMemory(logicalDevice, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
     }
 }
 
 void createDescriptorPool(){
-    std::array<VkDescriptorPoolSize,3> poolSizes{};
+    std::array<VkDescriptorPoolSize,4> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *8);
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *5);
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *2);
+    poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[3].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *3);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
 
-    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *11);
+    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT *16);
 
     if (vkCreateDescriptorPool(logicalDevice, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor pool!");
@@ -2081,16 +2079,14 @@ void mainLoop(){
 }
 
 // takes a sub bvh and splits it if nessisary
-void improveBVH(int bvhLoc, int maxSplits){
+void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres *s){
     if (maxSplits < 2){
         maxSplits = 2;
     }
 
-
     glm::vec4 subBvh0 = mainBvhDM.bvhData.data[bvhLoc+0];
     glm::vec4 subBvh1 = mainBvhDM.bvhData.data[bvhLoc+1];
     glm::vec4 subBvh2 = mainBvhDM.bvhData.data[bvhLoc+2];
-
 
     int start = subBvh0[0];
     int numItems = subBvh0[1];
@@ -2100,11 +2096,38 @@ void improveBVH(int bvhLoc, int maxSplits){
     if (numItems <= maxSplits){
         if (type == 0){// bv
             for (int i = 0; i < numItems; i++){
-                improveBVH(start+stride*i,maxSplits);
+                improveBVH(start+stride*i,maxSplits, v, inds, s);
             }
         }
         return;
     }
+    else if (type == 1){// triangles have bigger limit
+        if (numItems/4 <= maxSplits){
+            return;
+        }
+    }
+
+
+
+
+    bool endNode = false;
+    if (numItems < 2*maxSplits){
+        endNode = true;
+    }
+
+
+    if (endNode){
+        return;
+    }
+    int numSubrootNodes;
+    if (numItems < maxSplits*maxSplits){
+        numSubrootNodes = std::ceil(sqrt(numItems));
+        numSubrootNodes = std::ceil(numItems/float(numSubrootNodes));
+    }
+    else{
+        numSubrootNodes = maxSplits;
+    }
+
 
 
 
@@ -2132,7 +2155,7 @@ void improveBVH(int bvhLoc, int maxSplits){
             max = glm::vec3(-65536);
             for (int j = 0; j < 3; j++){
                 for (int k = 0; k < 3; k++){
-                    float val = mainBvhDM.bvhData.data[int(mainBvhDM.bvhData.data[start+i*stride][j])][k];
+                    float val = v->verts[inds->indx[start+i*stride][j]][k];
                     if (val < min[k]){
                         min[k] = val;
                     }
@@ -2148,8 +2171,8 @@ void improveBVH(int bvhLoc, int maxSplits){
             break;
 
         case 2://sphere
-            min = glm::vec3(mainBvhDM.bvhData.data[start+i*stride]) - glm::vec3(mainBvhDM.bvhData.data[start+i*stride][3]);
-            max = glm::vec3(mainBvhDM.bvhData.data[start+i*stride]) + glm::vec3(mainBvhDM.bvhData.data[start+i*stride][3]);
+            min = glm::vec3(s->dims[start+i*stride]) - glm::vec3(s->dims[start+i*stride][3]);
+            max = glm::vec3(s->dims[start+i*stride]) + glm::vec3(s->dims[start+i*stride][3]);
             mins.push_back(min);
             maxes.push_back(max);
             mids.push_back((min+max)/glm::vec3(2.0));
@@ -2196,38 +2219,77 @@ void improveBVH(int bvhLoc, int maxSplits){
         }
     }
 
-    bvh copyBvhData;
-    for (int i = 0; i < bvhSize; i++){
-        copyBvhData.data[i] = mainBvhDM.bvhData.data[i];
-    }
-
-    for (int i = 0; i < numItems; i++){
-        for (int j = 0; j < stride; j++){
-            copyBvhData.data[start+ i*stride + j] = mainBvhDM.bvhData.data[start+ id[i]*stride + j];
+    
+    // make copy and update based on sorted id
+    bvh* copyBvhData = new bvh;
+    indicies* copy_inds = new indicies;
+    spheres* copy_spheres = new spheres;
+    switch (type){
+    case 0:// BVH
+        for (int i = 0; i < bvhSize; i++){
+            copyBvhData->data[i] = mainBvhDM.bvhData.data[i];
         }
+        for (int i = 0; i < numItems; i++){
+            for (int j = 0; j < stride; j++){
+                copyBvhData->data[start+ i*stride + j] = mainBvhDM.bvhData.data[start+ id[i]*stride + j];
+            }
+        }
+        break;
+    case 1:// triangles (only need to move indices as vertices are referenced (also means dont need to do reworkout what indices each are))
+        for (int i = 0; i < indsSize; i++){
+            copy_inds->indx[i] = inds->indx[i];
+        }
+        for (int i = 0; i < numItems; i++){
+            for (int j = 0; j < stride; j++){
+                copy_inds->indx[start+ i*stride + j] = inds->indx[start+ id[i]*stride + j];
+            }
+        }
+        break;
+    case 2:// spheres
+        for (int i = 0; i < spheresSize; i++){
+            copy_spheres->dims[i] = s->dims[i];
+        }
+        for (int i = 0; i < spheresSize/4; i++){
+            copy_spheres->mats[i] = s->mats[i];
+        }
+        for (int i = 0; i < numItems; i++){
+            for (int j = 0; j < stride; j++){
+                copy_spheres->dims[start+ i*stride + j] = s->dims[start+ id[i]*stride + j];
+                copy_spheres->mats[(start+ i*stride + j)/4][(start+ i*stride + j)%4] = s->mats[(start+ id[i]*stride + j)/4][(start+ id[i]*stride + j)%4];
+            }
+        }
+        break;
+    default:
+        break;
     }
 
-    for (int i = 0; i < bvhSize; i++){
-        mainBvhDM.bvhData.data[i] = copyBvhData.data[i];
+    // copy back to main
+    switch (type)
+    {
+    case 0:// BVH
+        for (int i = 0; i < bvhSize; i++){
+            mainBvhDM.bvhData.data[i] = copyBvhData->data[i];
+        }
+        break;
+    case 1:// triangles
+        for (int i = 0; i < indsSize; i++){
+            inds->indx[i] = copy_inds->indx[i];
+        }
+        break;
+    case 2:// spheres
+        for (int i = 0; i < spheresSize; i++){
+            s->dims[i] = copy_spheres->dims[i];
+        }
+        for (int i = 0; i < spheresSize/4; i++){
+            s->mats[i] = copy_spheres->mats[i];
+        }
+        break;
+    default:
+        break;
     }
 
-    bool endNode = false;
-    if (numItems < 2*maxSplits){
-        endNode = true;
-    }
 
 
-    if (endNode){
-        return;
-    }
-    int numSubrootNodes;
-    if (numItems < maxSplits*maxSplits){
-        numSubrootNodes = std::ceil(sqrt(numItems));
-        numSubrootNodes = std::ceil(numItems/float(numSubrootNodes));
-    }
-    else{
-        numSubrootNodes = maxSplits;
-    }
 
     std::vector<int> starts;
     std::vector<int> lengths;
@@ -2246,6 +2308,7 @@ void improveBVH(int bvhLoc, int maxSplits){
     int newBVLoc = mainBvhDM.findUnAllocSpace(3*numSubrootNodes);
     if (newBVLoc == -1){
         std::cout << "no space in BV data for optimisation\n";
+        // this may break things as it has already moved some stuff around
         return;
     }
     mainBvhDM.allocateMem(newBVLoc,3*numSubrootNodes,0);
@@ -2275,15 +2338,15 @@ void improveBVH(int bvhLoc, int maxSplits){
 
 
     for (int i = 0; i < numSubrootNodes; i++){
-        improveBVH(newBVLoc+3*i,maxSplits);
+        improveBVH(newBVLoc+3*i,maxSplits, v, inds, s);
         //std::cout << newBVLoc+3*i << "hi\n";
     }
-    std::cout << "donebranch\n";
-    std::cout << numSubrootNodes << "\n";
+    //std::cout << "donebranch\n";
+    //std::cout << numSubrootNodes << "\n";
 }
 
 // only to be used in createBVH
-bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3]){
+bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3], verticies* v, indicies* inds){
     std::fstream file;
     std::vector<std::string> lines;
     std::string line;
@@ -2311,18 +2374,8 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3]){
             numFaces += numSpaces -2;
         }
     }
-
-    int vertsLoc = mainBvhDM.findUnAllocSpace(numVerts);
-    if (vertsLoc == -1){
-        return false;
-    }
-    mainBvhDM.allocateMem(vertsLoc,numVerts,3);
-    int facesLoc = mainBvhDM.findUnAllocSpace(numFaces);
-    if (facesLoc == -1){
-        mainBvhDM.allocateMem(vertsLoc,numVerts,-1); // deallocating allocated space as it failed
-        return false;
-    }
-    mainBvhDM.allocateMem(facesLoc,numFaces,1);
+    std::cout << numVerts << " num of verts in model\n";
+    std::cout << numFaces << " num of faces in model\n";
 
     int currentNumVerts = 0;
     int currentNumFaces = 0;
@@ -2337,7 +2390,7 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3]){
             for (int j = 0; j < lines[i].length(); j++){
                 if (lines[i][j] == ' '){
                     if (started){
-                        mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][numNum] = stof(currentNum);
+                        v->verts[currentNumVerts][numNum] = stof(currentNum);
                         numNum++;
                     }
                     currentNum = "";
@@ -2348,14 +2401,12 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3]){
                 }
             }
             if (numNum == 2){
-                mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][numNum] = stof(currentNum);
+                v->verts[currentNumVerts][numNum] = stof(currentNum);
                 numNum++;
             }
 
-            //float temp = mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][1];
-            //mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][1] = -mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][2];
-            //mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][2] = temp;
-            mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][1] = -mainBvhDM.bvhData.data[vertsLoc + currentNumVerts][1];
+            // transition from blender coords
+            v->verts[currentNumVerts][1] = -v->verts[currentNumVerts][1];
 
             currentNumVerts++;
         }
@@ -2367,12 +2418,16 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3]){
             std::vector<int> faceIndxs;
             for (int j = 0; j < lines[i].length(); j++){
                 if (lines[i][j] == ' '){
+                    if (recording){
+                        faceIndxs.push_back(stoi(currentNum) - 1);// obj files start with vert 1
+                        recording = false;
+                    }
                     recording = true;
                     currentNum = "";
                 }
                 else if (lines[i][j] == '/'){
                     if (recording){
-                        faceIndxs.push_back(stoi(currentNum) + vertsLoc - 1);
+                        faceIndxs.push_back(stoi(currentNum) - 1);// obj files start with vert 1
                         recording = false;
                     }
                 }
@@ -2380,33 +2435,40 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3]){
                     currentNum += lines[i][j];
                 }
             }
+            if (recording){
+                faceIndxs.push_back(stoi(currentNum) - 1);// obj files start with vert 1
+                recording = false;
+            }
 
             for (int j = 1; j < faceIndxs.size()-1; j++){// split into triangles
-                mainBvhDM.bvhData.data[facesLoc + currentNumFaces][0] = faceIndxs[0];
-                mainBvhDM.bvhData.data[facesLoc + currentNumFaces][1] = faceIndxs[j];
-                mainBvhDM.bvhData.data[facesLoc + currentNumFaces][2] = faceIndxs[j+1];
-                mainBvhDM.bvhData.data[facesLoc + currentNumFaces][3] = 0;//i%6;
+                inds->indx[currentNumFaces][0] = faceIndxs[0];
+                inds->indx[currentNumFaces][1] = faceIndxs[j];
+                inds->indx[currentNumFaces][2] = faceIndxs[j+1];
+                inds->indx[currentNumFaces][3] = 0;//i%6;
                 
                 currentNumFaces++;
             }
         }
     }
+    std::cout << currentNumVerts << " num of verts in model\n";
+    std::cout << currentNumFaces << " num of faces in model\n";
+
 
     retBV[1] = glm::vec4(65536);
     retBV[2] = glm::vec4(-65536);
 
     for (int i = 0; i < numVerts; i++){// calc mins and maxes
         for (int j = 0; j < 3; j++){
-            if (mainBvhDM.bvhData.data[vertsLoc + i][j] < retBV[1][j]){
-                retBV[1][j] = mainBvhDM.bvhData.data[vertsLoc + i][j];
+            if (v->verts[i][j] < retBV[1][j]){
+                retBV[1][j] = v->verts[i][j];
             }
-            if (mainBvhDM.bvhData.data[vertsLoc + i][j] > retBV[2][j]){
-                retBV[2][j] = mainBvhDM.bvhData.data[vertsLoc + i][j];
+            if (v->verts[i][j] > retBV[2][j]){
+                retBV[2][j] = v->verts[i][j];
             }
         }
     }
 
-    retBV[0][0] = facesLoc;
+    retBV[0][0] = 0;//location in indices buffer
     retBV[0][1] = numFaces;
     retBV[0][2] = 1;
     retBV[0][3] = 1;
@@ -2414,12 +2476,11 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3]){
     return true;
 }
 
-void createBVH(){
+void createBVH(uint32_t currentImage){
     // allocate first bit
     mainBvhDM.allocateMem(0,12,0);
 
 
-    int sphereLoc = 64;
 
     for (int i = 0; i < bvhSize; i++){// clear data
         mainBvhDM.bvhData.data[i] = glm::vec4(0,0,0,0);
@@ -2435,128 +2496,65 @@ void createBVH(){
     std::vector<glm::vec4> mins;
     std::vector<glm::vec4> maxes;
 
-    mainBvhDM.allocateMem(64,16*2,2);
+
+    spheres* s = new spheres;
+
     for (int i = 0; i < 16; i++){// a bunch of spheres
-        mainBvhDM.bvhData.data[64+i*2] = glm::vec4(2.5+(i%4)*2/3.0,((i/4)%2)-0.5,i/8-0.5,0.25);
-        mainBvhDM.bvhData.data[64+i*2+1] = glm::vec4(i%6,0,0,0); // the 0s dont matter unused data
+        s->dims[i] = glm::vec4(2.5+ (i%4)*2/3.0, ((i/4)%2) -0.5,i/8 -0.5,0.25);
     }
-    mainBvhDM.bvhData.data[64+8] = glm::vec4(0,6,5,3);
-    mainBvhDM.bvhData.data[64+9] = glm::vec4(5,0,0,0);
+
+    for (int i = 0; i < 4; i++){// mat inds for spheres
+        s->mats[i] = glm::vec4((i*4)%6,(i*4+1)%6,(i*4+2)%6,(i*4+3)%6);
+    }
+
+    // add a light ??
+    s->dims[4] = glm::vec4(0,6,5,3);
+    s->mats[1].x = 5;
+
+
+
+
 
     mins.push_back(glm::vec4(65536,65536,65536,0));
     maxes.push_back(glm::vec4(-65536,-65536,-65536,0));
     for (int i = 0; i < 16; i++){
         for (int j = 0; j < 3; j++){
-            if (mainBvhDM.bvhData.data[64+i*2][j]-mainBvhDM.bvhData.data[64+i*2][3] < mins[0][j]){
-                mins[0][j] = mainBvhDM.bvhData.data[64+i*2][j]-mainBvhDM.bvhData.data[64+i*2][3];
+            if (s->dims[i][j]-s->dims[i][3] < mins[0][j]){
+                mins[0][j] = s->dims[i][j]-s->dims[i][3];
             }
-            if (mainBvhDM.bvhData.data[64+i*2][j]+mainBvhDM.bvhData.data[64+i*2][3] > maxes[0][j]){
-                maxes[0][j] = mainBvhDM.bvhData.data[64+i*2][j]+mainBvhDM.bvhData.data[64+i*2][3];
-            }
-        }
-    }
-
-    /*std::string vertstring;
-    std::string facestring;
-    std::vector<glm::vec4> verts;
-    std::vector<std::vector<int>> faces;
-    std::fstream file;
-    std::vector<std::string> lines;
-    std::string line;
-    file.open("space_ship_model.txt",std::fstream::in);
-    while (std::getline(file,line)){
-        lines.push_back(line);
-    }
-    vertstring = lines[0];
-    facestring = lines[1];// assumes that there are 2 lines not validated
-
-    for (int i = 0; i < vertstring.length()-2; i++){
-        while (vertstring[i] != '('){// find next thing
-            i++;
-        }
-        glm::vec4 vertPos = glm::vec4(0);
-        for (int j = 0; j < 3; j++){
-            std::string currentNumber = "";
-            i++;
-            while (vertstring[i] != ',' && vertstring[i] != ')'){
-                if (vertstring[i] != ' '){
-                    currentNumber += vertstring[i];
-                }
-                i++;
-            }
-            vertPos[j] = std::stof(currentNumber);
-        }
-        // transformation from blender to vulkan coords
-        float temp = vertPos[1];
-        vertPos[1] = -vertPos[2];
-        vertPos[2] = temp;
-        verts.push_back(vertPos);
-    }
-
-    for (int i = 0; i < facestring.length()-2; i++){
-        while (facestring[i] != '[' || facestring[i+1] == '['){// find next thing
-            i++;
-        }
-        std::vector<int> inds;
-        for (int j = 0; j < 4; j++){
-            std::string currentNumber = "";
-            i++;
-            while (facestring[i] != ',' && facestring[i] != ']'){
-                if (facestring[i] != ' '){
-                    currentNumber += facestring[i];
-                }
-                i++;
-            }
-            inds.push_back(std::stoi(currentNumber));
-        }
-        faces.push_back(inds);
-    }
-    int vertsLoc = mainBvhDM.findUnAllocSpace(verts.size());
-    mainBvhDM.allocateMem(vertsLoc,verts.size(),3);
-    glm::vec4 min = glm::vec4(65536,65536,65536,0);
-    glm::vec4 max = glm::vec4(-65536,-65536,-65536,0);
-    for (int i = 0; i < verts.size(); i++){
-        mainBvhDM.bvhData.data[vertsLoc+i] = verts[i];
-        for (int j = 0; j < 3; j++){
-            if (verts[i][j] < min[j]){
-                min[j] = verts[i][j];
-            }
-            if (verts[i][j] > max[j]){
-                max[j] = verts[i][j];
+            if (s->dims[i][j]+s->dims[i][3] > maxes[0][j]){
+                maxes[0][j] = s->dims[i][j]+s->dims[i][3];
             }
         }
     }
-    mins.push_back(min);
-    maxes.push_back(max);
 
-
-
-    std::vector<glm::vec4> trifaces;
-
-    for (int i = 0; i < faces.size(); i++){
-        for (int j = 0; j < faces[i].size()-2; j++){// for each triangle in the polygon
-            glm::vec4 face = glm::vec4(i % 6);
-            face[0] = faces[i][0];
-            for (int k = 1; k < 3; k++){
-                face[k] = faces[i][(j+k)%faces[i].size()];
-            }
-            std::cout << face[0] << " " << face[1] << " " << face[2] << "\n";
-            trifaces.push_back(face+glm::vec4(vertsLoc,vertsLoc,vertsLoc,0));
-        }
-    }
-
-    int facesLoc = mainBvhDM.findUnAllocSpace(trifaces.size());
-    mainBvhDM.allocateMem(facesLoc,trifaces.size(),1);
-    for (int i = 0; i < trifaces.size(); i++){
-        mainBvhDM.bvhData.data[facesLoc+i] = trifaces[i];
-    }*/
     glm::vec4 retModelVecs[3];
     retModelVecs[0] = glm::vec4(0);
     retModelVecs[1] = glm::vec4(0);
     retModelVecs[2] = glm::vec4(0);
-    if (!loadObjToBVH("space_ship_model.obj",retModelVecs)){
+
+    indicies* inds = new indicies;
+    for (int i = 0; i < 64; i++){
+        for (int j = 0; j < 4; j++){
+            inds->indx[i][j] = 0;
+        }
+    }
+    verticies* v = new verticies;
+    for (int i = 0; i < 64; i++){
+        for (int j = 0; j < 4; j++){
+            v->verts[i][j] = 0.0;
+        }
+    }
+
+    //auto file_name = "space_ship_model.obj";
+    auto file_name = "suzanne.obj";
+    //auto file_name = "teapot.obj";
+    //auto file_name = "stanford-bunny.obj";
+    if (!loadObjToBVH(file_name,retModelVecs, v, inds)){
         throw std::runtime_error("cant load model");
     }
+
+
     mins.push_back(retModelVecs[1]);
     maxes.push_back(retModelVecs[2]);
 
@@ -2583,7 +2581,7 @@ void createBVH(){
     mainBvhDM.bvhData.data[1] = totalmins;
     mainBvhDM.bvhData.data[2] = totalmaxes;
 
-    mainBvhDM.bvhData.data[3] = glm::vec4(sphereLoc,16,2,2); // start at 64 , 16 items , 2 vec4 stride, type is sphere
+    mainBvhDM.bvhData.data[3] = glm::vec4(0,16,1,2); // start at 0 , 16 items , 1 vec4 stride, type is sphere
     mainBvhDM.bvhData.data[4] = mins[0];
     mainBvhDM.bvhData.data[5] = maxes[0];
 
@@ -2591,19 +2589,35 @@ void createBVH(){
     mainBvhDM.bvhData.data[7] = mins[1];
     mainBvhDM.bvhData.data[8] = maxes[1];
 
-    //improveBVH(0,2);
+    std::cout << "about to improve\n";
+
+    improveBVH(0,2, v, inds, s);
     mainBvhNeedGenerating = false;
 
-    for (int i = 0; i < bvhSize; i++){
+    std::cout << "finished improving\n";
+
+    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*3 +currentImage], s, sizeof(*s));
+    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*5 +currentImage], inds, sizeof(*inds));
+    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*6 +currentImage], v, sizeof(*v));
+
+    /*for (int i = 0; i < vertsSize; i++){
+        std::cout << i << "; " << v->verts[i][0] << " " << v->verts[i][1] << " " << v->verts[i][2] << " " << v->verts[i][3] << "\n";
+    }*/
+    /*for (int i = 0; i < indsSize; i++){
+        std::cout << i << "; " << inds->indx[i][0] << " " << inds->indx[i][1] << " " << inds->indx[i][2] << " " << inds->indx[i][3] << "\n";
+    }*/
+    /*for (int i = 0; i < spheresSize; i++){
+        std::cout << i << "; " << s->dims[i][0] << " " << s->dims[i][1] << " " << s->dims[i][2] << " " << s->dims[i][3] << "\n";
+    }*/
+    for (int i = 0; i < 512; i++){
         std::cout << i << "; " << mainBvhDM.bvhData.data[i][0] << " " << mainBvhDM.bvhData.data[i][1] << " " << mainBvhDM.bvhData.data[i][2] << " " << mainBvhDM.bvhData.data[i][3] << "\n";
     }
-
 }
 
 void updateUniformBuffer(uint32_t currentImage){
     UniformBufferObject ubo{};
     ubo.model = glm::rotate(glm::mat4(1.0f),frame*0.001f,glm::vec3(0.0f,0.0f,1.0f));
-    ubo.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    ubo.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     ubo.proj = glm::perspective((float)M_PI/4.0f, swapChainExtent.width/(float) swapChainExtent.height, 0.1f,10.0f);
     ubo.proj[1][1] *= -1;//because it was designed for opengl y flip
 
@@ -2616,32 +2630,12 @@ void updateUniformBuffer(uint32_t currentImage){
 
     computeState state;
     float fov = 1.;
-    state.pos = glm::vec3(3,-5,-5);
-    state.angles = glm::vec2(0.8,0.2);
+    state.pos = glm::vec3(3,0,-15);
+    state.angles = glm::vec2(0.0,0.0);
     state.screenExtent = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
     state.x = glm::ivec1(frame);
-    state.numSpheres = glm::ivec1(numSpheres);
-    state.numTriangles = glm::ivec1(numTriangles);
     state.numRootBVs = glm::ivec1(numRootBVs);
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*2 +currentImage], &state, sizeof(state));
-
-    spheres s;
-    for (int i = 6; i < numSpheres; i++){
-        s.dims[i] = glm::vec4(i*0.1,0,1,0.1);
-    }
-
-    s.dims[0] = glm::vec4(0,0,4,0.5);
-    s.dims[1] = glm::vec4(1,2,5,2.5);
-    s.dims[2] = glm::vec4(8,-6,20,2.5);
-    s.dims[3] = glm::vec4(-8,-8,16,5.5);
-    s.dims[4] = glm::vec4(0,0,80,45);
-    s.dims[5] = glm::vec4(0,0,2,0.1);
-
-    for (int i = 0; i < numSpheres/4+1; i++){
-        s.mats[i] = glm::ivec4(4*(i%2),4*(i%2)+1,4*(i%2)+2,4*(i%2)+3);
-    }
-
-    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*3 +currentImage], &s, sizeof(s));
 
     materials m;
     for (int i = 0; i < 16; i++){
@@ -2676,44 +2670,9 @@ void updateUniformBuffer(uint32_t currentImage){
 
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*4 +currentImage], &m, sizeof(m));
 
-
-    indicies i;
-    for (int j = 0; j < 16; j++){
-        i.indx[j] = glm::ivec4(0,0,0,0);
-    }
-    i.indx[0] = glm::ivec4(0,1,2,0);
-    i.indx[1] = glm::ivec4(1,3,2,0);
-
-    i.indx[2] = glm::ivec4(4,6,5,3);
-    i.indx[3] = glm::ivec4(5,6,7,3);
-
-    i.indx[4] = glm::ivec4(0,4,1,4);
-    i.indx[5] = glm::ivec4(4,5,1,4);
-
-    i.indx[6] = glm::ivec4(2,3,6,1);
-    i.indx[7] = glm::ivec4(6,3,7,1);
-
-    i.indx[8] = glm::ivec4(0,2,4,4);
-    i.indx[9] = glm::ivec4(2,6,4,4);
-
-    i.indx[10] = glm::ivec4(1,5,3,2);
-    i.indx[11] = glm::ivec4(3,5,7,2);
-
-    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*5 +currentImage], &i, sizeof(i));
-
-    verticies v;
-    for (int i = 0; i < 16; i++){
-        v.verts[i] = glm::vec4(0,0,0,0);
-    }
-    for (int i = 0; i < 8; i++){
-        v.verts[i] = glm::vec4(i%2-0.5+5,(i/2)%2-0.5,i/4-0.5,0);
-    }
-
-    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*6 +currentImage], &v, sizeof(v));
-
     
     if (mainBvhNeedGenerating){
-        createBVH();
+        createBVH(currentImage);
         memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*7 +currentImage], &mainBvhDM.bvhData, sizeof(mainBvhDM.bvhData));
     }
     
