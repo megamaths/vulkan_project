@@ -2078,11 +2078,12 @@ void mainLoop(){
     vkDeviceWaitIdle(logicalDevice);
 }
 
-// takes a sub bvh and splits it if nessisary
-void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres *s){
-    if (maxSplits < 2){
-        maxSplits = 2;
-    }
+
+void get_BVH_split(std::vector<int> &starts, std::vector<int> &lengths
+, std::vector<glm::vec4> &mins_out, std::vector<glm::vec4> &maxes_out
+, verticies *v, indicies *inds, spheres *s, int bvhLoc){
+    // assume only spliting onto 2 as more than 2 would be difficult to decide where to split
+
 
     glm::vec4 subBvh0 = mainBvhDM.bvhData.data[bvhLoc+0];
     glm::vec4 subBvh1 = mainBvhDM.bvhData.data[bvhLoc+1];
@@ -2093,49 +2094,28 @@ void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres
     int stride = subBvh0[2];
     int type = subBvh0[3];
 
-    if (numItems <= maxSplits){
-        if (type == 0){// bv
-            for (int i = 0; i < numItems; i++){
-                improveBVH(start+stride*i,maxSplits, v, inds, s);
-            }
-        }
-        return;
-    }
-    else if (type == 1){// triangles have bigger limit
-        if (numItems/4 <= maxSplits){
-            return;
+    int bD = 0;// biggest Dimension width length depth (0,1,2)
+    for (int i = 1; i < 3; i++){
+        if (subBvh2[i]-subBvh1[i] > subBvh2[bD]-subBvh1[bD]){
+            bD = i;
         }
     }
 
+    float pivot = (subBvh2[bD]+subBvh1[bD])/2.0;// default half position
 
 
-
-    bool endNode = false;
-    if (numItems < 2*maxSplits){
-        endNode = true;
-    }
+    //auto bb_start_time = std::chrono::high_resolution_clock::now();
 
 
-    if (endNode){
-        return;
-    }
-    int numSubrootNodes;
-    if (numItems < maxSplits*maxSplits){
-        numSubrootNodes = std::ceil(sqrt(numItems));
-        numSubrootNodes = std::ceil(numItems/float(numSubrootNodes));
-    }
-    else{
-        numSubrootNodes = maxSplits;
-    }
+    // TODO reuse by sending as const arguements would make significant difference
+
+    // roughly reduced time (of split func) by 1/3 by specifing size of below
+    std::vector<glm::vec3> mins(numItems, glm::vec3(0.0));
+    std::vector<glm::vec3> maxes(numItems, glm::vec3(0.0));
+    std::vector<glm::vec3> mids(numItems, glm::vec3(0.0));
+    std::vector<int> id(numItems, 0);
 
 
-
-
-
-    std::vector<glm::vec3> mins;
-    std::vector<glm::vec3> maxes;
-    std::vector<glm::vec3> mids;
-    std::vector<int> id;
     for (int i = 0; i < numItems; i++){
         glm::vec3 min;
         glm::vec3 max;
@@ -2144,10 +2124,10 @@ void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres
         case 0://bvh
             min = mainBvhDM.bvhData.data[start+i*stride + 1];
             max = mainBvhDM.bvhData.data[start+i*stride + 2];
-            mins.push_back(min);
-            maxes.push_back(max);
-            mids.push_back((min+max)/glm::vec3(2.0));
-            id.push_back(i);
+            mins[i] = min;
+            maxes[i] = max;
+            mids[i] = (min+max)/glm::vec3(2.0);
+            id[i] = i;
             break;
 
         case 1://triangle
@@ -2164,19 +2144,19 @@ void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres
                     }
                 }
             }
-            mins.push_back(min);
-            maxes.push_back(max);
-            mids.push_back((min+max)/glm::vec3(2.0));
-            id.push_back(i);
+            mins[i] = min;
+            maxes[i] = max;
+            mids[i] = (min+max)/glm::vec3(2.0);
+            id[i] = i;
             break;
 
         case 2://sphere
             min = glm::vec3(s->dims[start+i*stride]) - glm::vec3(s->dims[start+i*stride][3]);
             max = glm::vec3(s->dims[start+i*stride]) + glm::vec3(s->dims[start+i*stride][3]);
-            mins.push_back(min);
-            maxes.push_back(max);
-            mids.push_back((min+max)/glm::vec3(2.0));
-            id.push_back(i);
+            mins[i] = min;
+            maxes[i] = max;
+            mids[i] = (min+max)/glm::vec3(2.0);
+            id[i] = i;
             break;
         
         default:
@@ -2185,40 +2165,76 @@ void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres
     }
 
 
-    int bD = 0;// biggest Dimension width length depth (0,1,2)
-    for (int i = 1; i < 3; i++){
-        if (subBvh2[i]-subBvh1[i] > subBvh2[bD]-subBvh1[bD]){
-            bD = i;
+    /*auto bb_end_time = std::chrono::high_resolution_clock::now();
+    auto bb_duration = std::chrono::duration_cast<std::chrono::microseconds>(bb_end_time - bb_start_time);
+
+    if (numItems > 1000){
+        std::cout << bb_duration.count() << " " << numItems << " bb\n";
+    }*/
+
+
+
+    // ordering takes very little time ~ 1.4ms for the 60000 faces (1 pass)
+    auto order_start_time = std::chrono::high_resolution_clock::now();
+
+    // the inds which items will be put at after comparing to pivot
+    int next_small = 0;
+    int next_big = numItems-1;
+    for (int i = 0; i < numItems-1; i++){
+        // compare next small with pivot if smaller next_small++;
+        // else swap next_small with next_big then next_big--;
+        if (mids[next_small][bD] < pivot){
+            next_small++;
+        }
+        else{
+            glm::vec3 temp = mids[next_small];
+            mids[next_small] = mids[next_big];
+            mids[next_big] = temp;
+
+            temp = mins[next_small];
+            mins[next_small] = mins[next_big];
+            mins[next_big] = temp;
+            
+            temp = maxes[next_small];
+            maxes[next_small] = maxes[next_big];
+            maxes[next_big] = temp;
+            
+            int tempi = id[next_small];
+            id[next_small] = id[next_big];
+            id[next_big] = tempi;
+
+            next_big--;
         }
     }
 
-    while(true){// bubble sort as if slow enough that this matters i will have other problems
-        bool flag = false;
-        for (int i = 0; i < numItems-1; i++){
-            if (mids[i][bD] > mids[i+1][bD]){
-                flag = true;
-                glm::vec3 temp = mids[i];
-                mids[i] = mids[i+1];
-                mids[i+1] = temp;
+    lengths.push_back(next_small);
+    lengths.push_back(numItems-(next_small));
+    starts.push_back(0);
+    starts.push_back(next_small);
 
-                temp = mins[i];
-                mins[i] = mins[i+1];
-                mins[i+1] = temp;
-                
-                temp = maxes[i];
-                maxes[i] = maxes[i+1];
-                maxes[i+1] = temp;
-                
-                int tempi = id[i];
-                id[i] = id[i+1];
-                id[i+1] = tempi;
-            }
-        }
-        if (!flag){
-            break;
-        }
+
+    /*auto order_end_time = std::chrono::high_resolution_clock::now();
+    auto order_duration = std::chrono::duration_cast<std::chrono::microseconds>(order_end_time - order_start_time);
+
+    if (numItems > 1000){
+        std::cout << order_duration.count() << " " << numItems << " order\n";
+    }*/
+
+    if (lengths[0] == 0 || lengths[1] == 0){
+        // simple split is not good enough
+        mins_out.push_back(subBvh1);
+        maxes_out.push_back(subBvh2);
+        return;
     }
 
+
+
+    // copy appears to be a significant time for smaller bvhs ~ half the time for a 1000 face as a 60000 face
+    // bad scaling
+    // opt 1 going to make it only recopy data it uses (so far only done for triangles)
+    // -> dramatic increase in speed now ~ 20us for a 1000 face as apposed to previously 800us
+    // -> for large items is somehow still made it ~ 1/3 faster
+    //auto copy_start_time = std::chrono::high_resolution_clock::now();
     
     // make copy and update based on sorted id
     bvh* copyBvhData = new bvh;
@@ -2236,9 +2252,6 @@ void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres
         }
         break;
     case 1:// triangles (only need to move indices as vertices are referenced (also means dont need to do reworkout what indices each are))
-        for (int i = 0; i < indsSize; i++){
-            copy_inds->indx[i] = inds->indx[i];
-        }
         for (int i = 0; i < numItems; i++){
             for (int j = 0; j < stride; j++){
                 copy_inds->indx[start+ i*stride + j] = inds->indx[start+ id[i]*stride + j];
@@ -2246,9 +2259,6 @@ void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres
         }
         break;
     case 2:// spheres
-        for (int i = 0; i < spheresSize; i++){
-            copy_spheres->dims[i] = s->dims[i];
-        }
         for (int i = 0; i < spheresSize/4; i++){
             copy_spheres->mats[i] = s->mats[i];
         }
@@ -2272,13 +2282,17 @@ void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres
         }
         break;
     case 1:// triangles
-        for (int i = 0; i < indsSize; i++){
-            inds->indx[i] = copy_inds->indx[i];
+        for (int i = 0; i < numItems; i++){
+            for (int j = 0; j < stride; j++){
+                inds->indx[start+ i*stride + j] = copy_inds->indx[start+ i*stride + j];
+            }
         }
         break;
     case 2:// spheres
-        for (int i = 0; i < spheresSize; i++){
-            s->dims[i] = copy_spheres->dims[i];
+        for (int i = 0; i < numItems; i++){
+            for (int j = 0; j < stride; j++){
+                s->dims[start+ i*stride + j] = copy_spheres->dims[start+ i*stride + j];
+            }
         }
         for (int i = 0; i < spheresSize/4; i++){
             s->mats[i] = copy_spheres->mats[i];
@@ -2290,29 +2304,20 @@ void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres
 
 
 
+    /*auto copy_end_time = std::chrono::high_resolution_clock::now();
+    auto copy_duration = std::chrono::duration_cast<std::chrono::microseconds>(copy_end_time - copy_start_time);
 
-    std::vector<int> starts;
-    std::vector<int> lengths;
-    int cummulativeLen = 0;
-    for (int i = 0; i < numSubrootNodes; i++){
-        int thisLength = numItems/numSubrootNodes;
-        if (numItems-thisLength*numSubrootNodes > i){
-            thisLength++;
-        }
-        int thisStart = cummulativeLen;
-        cummulativeLen += thisLength;
-        starts.push_back(thisStart);
-        lengths.push_back(thisLength);
-    }
+    if (numItems > 1000){
+        std::cout << copy_duration.count() << " " << numItems << " copy\n";
+    }*/
 
-    int newBVLoc = mainBvhDM.findUnAllocSpace(3*numSubrootNodes);
-    if (newBVLoc == -1){
-        std::cout << "no space in BV data for optimisation\n";
-        // this may break things as it has already moved some stuff around
-        return;
-    }
-    mainBvhDM.allocateMem(newBVLoc,3*numSubrootNodes,0);
-    for (int i = 0; i < numSubrootNodes; i++){
+
+
+
+    // seems about 6 times faster geting the new bounding box than evaluating sub objects bounding boxes
+    //auto fbb_start_time = std::chrono::high_resolution_clock::now();
+
+    for (int i = 0; i < lengths.size(); i++){
         glm::vec4 thisMin = glm::vec4(65536);
         glm::vec4 thisMax = glm::vec4(-65536);
         for (int j = 0; j < lengths[i]; j++){
@@ -2325,19 +2330,114 @@ void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres
                 }
             }
         }
+
+        mins_out.push_back(thisMin);
+        maxes_out.push_back(thisMax);
+    }
+
+    /*auto fbb_end_time = std::chrono::high_resolution_clock::now();
+    auto fbb_duration = std::chrono::duration_cast<std::chrono::microseconds>(fbb_end_time - fbb_start_time);
+
+    if (numItems > 1000){
+        std::cout << fbb_duration.count() << " " << numItems << " fbb\n";
+    }*/
+
+
+}
+
+
+
+// takes a sub bvh and splits it if nessisary
+void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres *s){
+
+    //auto start_time = std::chrono::high_resolution_clock::now();
+
+
+    if (maxSplits < 2){
+        maxSplits = 2;
+    }
+    if (maxSplits != 2){
+        throw std::runtime_error("unsuppported bvh spliting > 2");
+    }
+
+    glm::vec4 subBvh0 = mainBvhDM.bvhData.data[bvhLoc+0];
+    glm::vec4 subBvh1 = mainBvhDM.bvhData.data[bvhLoc+1];
+    glm::vec4 subBvh2 = mainBvhDM.bvhData.data[bvhLoc+2];
+
+    int start = subBvh0[0];
+    int numItems = subBvh0[1];
+    int stride = subBvh0[2];
+    int type = subBvh0[3];
+
+
+    if (numItems <= maxSplits){
+        if (type == 0){// bv
+            for (int i = 0; i < numItems; i++){
+                improveBVH(start+stride*i,maxSplits, v, inds, s);
+            }
+        }
+        return;
+    }
+    else if (type == 1){// triangles have bigger limit
+        if (numItems/4 <= maxSplits){
+            return;
+        }
+    }
+
+
+    bool endNode = false;
+    if (numItems < 2*maxSplits){
+        endNode = true;
+    }
+    if (endNode){
+        return;
+    }
+    
+
+    //auto split_start_time = std::chrono::high_resolution_clock::now();
+    std::vector<int> starts;
+    std::vector<int> lengths;
+    std::vector<glm::vec4> mins;
+    std::vector<glm::vec4> maxes;
+    get_BVH_split(starts, lengths, mins, maxes, v, inds, s, bvhLoc);
+    if (mins.size() <= 1 || maxes.size() <= 1){
+        // could not split
+        return;
+    }
+    /*auto split_end_time = std::chrono::high_resolution_clock::now();
+    auto split_duration = std::chrono::duration_cast<std::chrono::microseconds>(split_end_time - split_start_time);
+
+    if (numItems > 1000){
+        std::cout << split_duration.count() << " " << numItems << " split\n";
+    }*/
+
+    int newBVLoc = mainBvhDM.findUnAllocSpace(3* 2);
+    if (newBVLoc == -1){
+        std::cout << "no space in BV data for optimisation\n";
+        // this may break things as it has already moved some stuff around
+        return;
+    }
+    mainBvhDM.allocateMem(newBVLoc,3* 2,0);
+    for (int i = 0; i < 2; i++){
         mainBvhDM.bvhData.data[newBVLoc + 3*i] = glm::vec4(start + starts[i]*stride, lengths[i], stride, type);
-        mainBvhDM.bvhData.data[newBVLoc + 3*i+1] = glm::vec4(thisMin);
-        mainBvhDM.bvhData.data[newBVLoc + 3*i+2] = glm::vec4(thisMax);
+        mainBvhDM.bvhData.data[newBVLoc + 3*i+1] = glm::vec4(mins[i]);
+        mainBvhDM.bvhData.data[newBVLoc + 3*i+2] = glm::vec4(maxes[i]);
     }
 
 
     mainBvhDM.bvhData.data[bvhLoc][0] = newBVLoc;// new start to sub bvs
-    mainBvhDM.bvhData.data[bvhLoc][1] = numSubrootNodes;// new legnth to num sub bvs
+    mainBvhDM.bvhData.data[bvhLoc][1] = 2;// new legnth to num sub bvs
     mainBvhDM.bvhData.data[bvhLoc][2] = 3;// new stride to 3
     mainBvhDM.bvhData.data[bvhLoc][3] = 0;// new type to bvs
 
+    /*auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
 
-    for (int i = 0; i < numSubrootNodes; i++){
+    if (numItems > 1000){
+        std::cout << duration.count() << " " << numItems << "\n";
+    }*/
+
+    for (int i = 0; i < 2; i++){
         improveBVH(newBVLoc+3*i,maxSplits, v, inds, s);
         //std::cout << newBVLoc+3*i << "hi\n";
     }
@@ -2459,6 +2559,7 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3], verticies* v, ind
 
     for (int i = 0; i < numVerts; i++){// calc mins and maxes
         for (int j = 0; j < 3; j++){
+            v->verts[i][j] *= 10.0;
             if (v->verts[i][j] < retBV[1][j]){
                 retBV[1][j] = v->verts[i][j];
             }
@@ -2547,9 +2648,9 @@ void createBVH(uint32_t currentImage){
     }
 
     //auto file_name = "space_ship_model.obj";
-    auto file_name = "suzanne.obj";
+    //auto file_name = "suzanne.obj";
     //auto file_name = "teapot.obj";
-    //auto file_name = "stanford-bunny.obj";
+    auto file_name = "stanford-bunny.obj";
     if (!loadObjToBVH(file_name,retModelVecs, v, inds)){
         throw std::runtime_error("cant load model");
     }
@@ -2609,9 +2710,9 @@ void createBVH(uint32_t currentImage){
     /*for (int i = 0; i < spheresSize; i++){
         std::cout << i << "; " << s->dims[i][0] << " " << s->dims[i][1] << " " << s->dims[i][2] << " " << s->dims[i][3] << "\n";
     }*/
-    for (int i = 0; i < 512; i++){
+    /*for (int i = 0; i < 512; i++){
         std::cout << i << "; " << mainBvhDM.bvhData.data[i][0] << " " << mainBvhDM.bvhData.data[i][1] << " " << mainBvhDM.bvhData.data[i][2] << " " << mainBvhDM.bvhData.data[i][3] << "\n";
-    }
+    }*/
 }
 
 void updateUniformBuffer(uint32_t currentImage){
@@ -2630,7 +2731,7 @@ void updateUniformBuffer(uint32_t currentImage){
 
     computeState state;
     float fov = 1.;
-    state.pos = glm::vec3(3,0,-15);
+    state.pos = glm::vec3(0,0,-5);
     state.angles = glm::vec2(0.0,0.0);
     state.screenExtent = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
     state.x = glm::ivec1(frame);

@@ -210,6 +210,7 @@ ray traceRay(ray mainRay){
         endStack = i;
     }
 
+    int max_i = 0;
     for (int i = 0; i < 10000; i++){// effective while but with safty limits
 
         // each of first 12n floats are root nodes
@@ -300,8 +301,9 @@ ray traceRay(ray mainRay){
                     
             }
         }
-        //retRay.colour += vec3(float(i)/1000.0);
+        max_i = i;
     }
+    //retRay.colour += vec3(float(max_i)/100.0);
 
 
 
