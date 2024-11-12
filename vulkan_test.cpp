@@ -177,7 +177,7 @@ struct verticies {
     alignas(16) glm::vec4 verts[vertsSize];
 };
 
-const int bvhSize = 65536;
+const int bvhSize = 262144;
 struct bvh{
     //
     alignas(16) glm::vec4 data[bvhSize];
@@ -2063,11 +2063,22 @@ void createSyncObjects(){
 
 void mainLoop(){
     int i = 0;
+    auto first_time = std::chrono::high_resolution_clock::now();
+    auto last_time = std::chrono::high_resolution_clock::now();
     while(!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         updateUniformBuffer(currentFrame);
         drawFrame();
+        if (i%1 == 0){
+            auto new_time = std::chrono::high_resolution_clock::now();
+            auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(new_time - first_time);
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(new_time - last_time);
+
+            std::cout << duration.count() << " " << total_duration.count()/float(i%100) << " " << i << "\n";
+            last_time = new_time;
+        }
         if (i%100 == 0){
+            first_time = std::chrono::high_resolution_clock::now();
             std::cout << i << "hi\n";
         }
         i++;
@@ -2078,6 +2089,71 @@ void mainLoop(){
     vkDeviceWaitIdle(logicalDevice);
 }
 
+float score_func(int num_items, glm::vec3 size){
+    //return num_items*num_items;// for some reason this causes it to crash
+    return (size[0]*size[1] + size[1]*size[2] + size[2]*size[0])*float(num_items);
+}
+
+float eval_split(std::vector<glm::vec3> mins, std::vector<glm::vec3> maxes, float pivot_prop, int dim_prop){
+    glm::vec3 min_1(65536);
+    glm::vec3 max_1(-65536);
+    glm::vec3 min_2(65536);
+    glm::vec3 max_2(-65536);
+
+    int num_1 = 0;
+    int num_2 = 0;
+
+    for (int i = 0; i < mins.size(); i++){
+        int group = 0;
+        if ((mins[i][dim_prop]+maxes[i][dim_prop])/2.0 > pivot_prop){
+            group = 1;
+        }
+        switch (group)
+        {
+        case 0:
+            num_1++;
+            for (int j = 0; j < 3; j++){
+                if (mins[i][j] < min_1[j]){
+                    min_1[j] = mins[i][j];
+                }
+                if (maxes[i][j] > max_1[j]){
+                    max_1[j] = maxes[i][j];
+                }
+            }
+            break;
+        case 1:
+            num_2++;
+            for (int j = 0; j < 3; j++){
+                if (mins[i][j] < min_2[j]){
+                    min_2[j] = mins[i][j];
+                }
+                if (maxes[i][j] > max_2[j]){
+                    max_2[j] = maxes[i][j];
+                }
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
+    glm::vec3 size_1 = max_1-min_1;
+    glm::vec3 size_2 = max_2-min_2;
+    
+    //std::cout << min_1[0] << " " << min_1[1] << " " << min_1[2] << " min1\n";
+    //std::cout << min_2[0] << " " << min_2[1] << " " << min_2[2] << " min2\n";
+    //std::cout << max_1[0] << " " << max_1[1] << " " << max_1[2] << " max1\n";
+    //std::cout << max_2[0] << " " << max_2[1] << " " << max_2[2] << " max2\n";
+
+    float score = 0.0;
+    if (num_1){score += score_func(num_1, size_1);}
+    if (num_2){score += score_func(num_2, size_2);}
+    if (!num_1 && !num_2){return FLT_MAX;}
+
+    //std::cout << num_1 << " " << num_2 << "\n";
+
+    return score;
+}
 
 void get_BVH_split(std::vector<int> &starts, std::vector<int> &lengths
 , std::vector<glm::vec4> &mins_out, std::vector<glm::vec4> &maxes_out
@@ -2093,15 +2169,6 @@ void get_BVH_split(std::vector<int> &starts, std::vector<int> &lengths
     int numItems = subBvh0[1];
     int stride = subBvh0[2];
     int type = subBvh0[3];
-
-    int bD = 0;// biggest Dimension width length depth (0,1,2)
-    for (int i = 1; i < 3; i++){
-        if (subBvh2[i]-subBvh1[i] > subBvh2[bD]-subBvh1[bD]){
-            bD = i;
-        }
-    }
-
-    float pivot = (subBvh2[bD]+subBvh1[bD])/2.0;// default half position
 
 
     //auto bb_start_time = std::chrono::high_resolution_clock::now();
@@ -2173,6 +2240,44 @@ void get_BVH_split(std::vector<int> &starts, std::vector<int> &lengths
     }*/
 
 
+    int bD = 0;// biggest Dimension width length depth (0,1,2)
+    for (int i = 1; i < 3; i++){
+        if (subBvh2[i]-subBvh1[i] > subBvh2[bD]-subBvh1[bD]){
+            bD = i;
+        }
+    }
+    float pivot = (subBvh2[bD]+subBvh1[bD])/2.0;// default half position
+
+
+    // this only appears to slightly improve quality ~ 10% faster
+    float default_score = eval_split(mins, maxes, pivot, bD);
+    float prev_score = FLT_MAX;
+    int num_steps = 50;
+    for (int i = 0; i < num_steps; i++){
+        for (int j = 0; j < 3; j++){
+            float proportion = (i+1)/float(num_steps+1);
+            float prop_pivot = subBvh1[j]*(proportion) + subBvh2[j]*(1.0- proportion);
+            float new_score = eval_split(mins, maxes, prop_pivot, j);
+            //std::cout << new_score << " score\n";
+            //std::cout << prop_pivot << " " << j << "\n";
+            if (new_score < prev_score){
+                bD = j;
+                pivot = prop_pivot;
+                prev_score = new_score;
+            }
+        }
+    }
+
+    glm::vec3 size = subBvh2-subBvh1;
+    float old_score = score_func(numItems, size);
+    //std::cout << prev_score-old_score << " " << numItems << "\n";
+    //std::cout << pivot << " " << bD << " final decision\n";
+    if (prev_score > old_score){
+        //std::cout << old_score << " " << prev_score << "\n";
+        mins_out.push_back(subBvh1);
+        maxes_out.push_back(subBvh2);
+        return;
+    }
 
     // ordering takes very little time ~ 1.4ms for the 60000 faces (1 pass)
     auto order_start_time = std::chrono::high_resolution_clock::now();
@@ -2211,7 +2316,7 @@ void get_BVH_split(std::vector<int> &starts, std::vector<int> &lengths
     lengths.push_back(numItems-(next_small));
     starts.push_back(0);
     starts.push_back(next_small);
-
+    //std::cout << lengths[0] << " " << lengths[1] << "\n";
 
     /*auto order_end_time = std::chrono::high_resolution_clock::now();
     auto order_duration = std::chrono::duration_cast<std::chrono::microseconds>(order_end_time - order_start_time);
@@ -2559,7 +2664,13 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3], verticies* v, ind
 
     for (int i = 0; i < numVerts; i++){// calc mins and maxes
         for (int j = 0; j < 3; j++){
-            v->verts[i][j] *= 10.0;
+            v->verts[i][j] *= 1.0;
+            if (j == 1){
+                v->verts[i][j] += 3.0;
+            }
+            if (j == 2){
+                v->verts[i][j] *= 1.0;
+            }
             if (v->verts[i][j] < retBV[1][j]){
                 retBV[1][j] = v->verts[i][j];
             }
@@ -2648,9 +2759,9 @@ void createBVH(uint32_t currentImage){
     }
 
     //auto file_name = "space_ship_model.obj";
-    //auto file_name = "suzanne.obj";
+    auto file_name = "suzanne.obj";
     //auto file_name = "teapot.obj";
-    auto file_name = "stanford-bunny.obj";
+    //auto file_name = "stanford-bunny.obj";
     if (!loadObjToBVH(file_name,retModelVecs, v, inds)){
         throw std::runtime_error("cant load model");
     }
@@ -2729,10 +2840,11 @@ void updateUniformBuffer(uint32_t currentImage){
 
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT +currentImage], &v2, sizeof(v2));
 
+    float angle = 0.01*frame;
     computeState state;
     float fov = 1.;
-    state.pos = glm::vec3(0,0,-5);
-    state.angles = glm::vec2(0.0,0.0);
+    state.pos = glm::vec3(sin(angle)*15,1,-cos(angle)*15.0);
+    state.angles = glm::vec2(0.0,angle);
     state.screenExtent = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
     state.x = glm::ivec1(frame);
     state.numRootBVs = glm::ivec1(numRootBVs);
@@ -2765,7 +2877,7 @@ void updateUniformBuffer(uint32_t currentImage){
     m.emmision[4] = glm::vec4(0,0,0,0);
     m.refractionVals[4] = glm::vec4(1.3,0,0,0);
 
-    m.colAndR[5] = glm::vec4(1,1,1,0.0);// light
+    m.colAndR[5] = glm::vec4(0,0,0,0.0);// light
     m.emmision[5] = glm::vec4(2,2,2,0);
     m.refractionVals[5] = glm::vec4(1.3,0,0,0);
 
