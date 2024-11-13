@@ -338,7 +338,7 @@ ray traceRay(ray mainRay){
     retRay.mediumN = m.refractionVals[materialIndex].x;
     float refractChance = m.refractionVals[materialIndex].y;
 
-    if (randVal()/256%16 == 0){//specular reflection
+    if (abs(randVal())/256%16 == 0){//specular reflection
         roughness = 0;
     }
 
@@ -348,8 +348,8 @@ ray traceRay(ray mainRay){
     }
 
 
+
     // if hit
-    float nDotR = abs(dot(normal,mainRay.dir));
 
     vec3 reflectRay = reflect(mainRay.dir,normal);
     vec3 refractRay = refract(mainRay.dir,normal, mainRay.mediumN/retRay.mediumN);
@@ -360,23 +360,26 @@ ray traceRay(ray mainRay){
     }
 
 
-
+    // previously nDotR was assuming perfect reflection
+    float nDotR = 1.0;
     float offsetMult = 0.0005;
-    if (randVal()%1024/1024.0 >= refractChance){// random choice reflect or refract
+    if (abs(randVal())%1024/1024.0 > refractChance){// random choice reflect or refract
         retRay.dir = normalize(reflectRay + randDir);
         retRay.mediumN = mainRay.mediumN;
+        nDotR = abs(dot(normal,retRay.dir));
     }
     else{
         retRay.dir = normalize(refractRay - randDir*0.01);
     }
 
+
     newCol = abs(newCol);
 
     retRay.start = mainRay.start + mainRay.dir * dist  +  retRay.dir *offsetMult;// not sure if last bit is nesisary it should prevent coliding with same object 2ce
                                                                                  // appears only nessisary for triangles not spheres
-    retRay.colour = mainRay.colour + (mainRay.absorbsion)*emmision*nDotR + newCol*abience;
-    retRay.absorbsion *= newCol;
-    //retRay.colour *= vec3(mainRay.mediumN/retRay.mediumN);
+    retRay.colour = mainRay.colour + (mainRay.absorbsion)*emmision + newCol*abience;
+    retRay.absorbsion *= newCol*nDotR;
+    // this assumes that specular reflection does not cause any colour change compared to a 0 roughness surface
 
     return retRay;
 }
@@ -435,7 +438,7 @@ void main(){
 
     vec3 sampleColour = imageLoad(lastOutputImage, xy_int).rgb;
 
-    float keepOld = min(state.frame/float(1+state.frame),0.775);
+    float keepOld = min(state.frame/float(1+state.frame),0.975);
 
     colour = (sampleColour*keepOld+colour*(1-keepOld));
     colour = abs(colour);

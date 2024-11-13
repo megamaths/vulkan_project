@@ -2550,8 +2550,123 @@ void improveBVH(int bvhLoc, int maxSplits, verticies *v, indicies *inds, spheres
     //std::cout << numSubrootNodes << "\n";
 }
 
+struct MaterialReturn{
+    std::string name;
+    glm::vec3 emissive;
+    glm::vec3 diffuse;
+    glm::vec3 specular;
+    glm::vec3 roughness;// only use first
+    glm::vec3 metallic;// only use first
+    glm::vec3 dissolve;// only use first
+    glm::vec3 optical_density;// only use first
+};
+
+
+
+std::vector<MaterialReturn> parseMTL(std::vector<std::string> lines){
+    std::vector<MaterialReturn> retval;
+
+    for (auto line : lines){
+        glm::vec3 *edit;
+        if (line[0] == 'n' && line[1] == 'e'){// newmtl
+
+            MaterialReturn new_mat;
+            retval.push_back(new_mat);
+            retval[retval.size()-1].name = line.substr(7);// the name
+
+            continue;
+        }
+        else if (line[0] == 'K' && line[1] == 'e'){
+            edit = &retval[retval.size()-1].emissive;
+        }
+        else if (line[0] == 'K' && line[1] == 'd'){
+            edit = &retval[retval.size()-1].diffuse;
+        }
+        else if (line[0] == 'K' && line[1] == 's'){
+            edit = &retval[retval.size()-1].specular;
+        }
+        else if (line[0] == 'P' && line[1] == 'r'){
+            edit = &retval[retval.size()-1].roughness;
+        }
+        else if (line[0] == 'P' && line[1] == 'm'){
+            edit = &retval[retval.size()-1].metallic;
+        }
+        else if ((line[0] == 'd' && line[1] == ' ') || (line[0] == 'T' && line[1] == 'r')){// Tr is 1-d but this would parse as d
+            edit = &retval[retval.size()-1].dissolve;
+        }
+        else if (line[0] == 'N' && line[1] == 'i'){
+            edit = &retval[retval.size()-1].optical_density;
+        }
+        else{// not implemented
+            continue;
+        }
+
+        bool started = false;
+        std::string currentNum = "";
+        int numNum = 0;
+        for (int j = 0; j < line.length(); j++){
+            if (line[j] == ' '){
+                if (started){
+                    (*edit)[numNum] = stof(currentNum);
+                    numNum++;
+                }
+                currentNum = "";
+                started = true;
+            }
+            else{
+                currentNum += line[j];
+            }
+        }
+        (*edit)[numNum] = stof(currentNum);
+
+        std::cout << line << "\n";
+    }
+
+
+    return retval;
+}
+
+void loadMTL(std::unordered_map<std::string, int> &hm, materials* m, int start_ind){
+    std::vector<std::string> potential_files = {"raytracing_model.mtl"};
+
+    for (auto s : potential_files){
+        std::fstream file;
+        std::vector<std::string> lines;
+        std::string line;
+        file.open(s);
+        
+        if (file.fail()){
+            std::cout << s << " could not open\n";
+            continue;
+        }
+
+        while (std::getline(file,line)){
+            lines.push_back(line);
+        }
+        file.close();
+
+        std::vector<MaterialReturn> mats = parseMTL(lines);
+
+
+
+        for (auto mat : mats){
+
+            m->colAndR[start_ind] = glm::vec4(mat.diffuse,mat.roughness[0]);
+            m->emmision[start_ind] = glm::vec4(mat.emissive,0.0);
+            m->refractionVals[start_ind] = glm::vec4(mat.optical_density[0], 1.0-mat.dissolve[0], 0.0, 0.0);
+
+            std::cout << m->colAndR[start_ind][0] << " " << m->colAndR[start_ind][1] << " " << m->colAndR[start_ind][2] << " " << m->colAndR[start_ind][3] << "\n";
+            std::cout << m->emmision[start_ind][0] << " " << m->emmision[start_ind][1] << " " << m->emmision[start_ind][2] << " " << m->emmision[start_ind][3] << "\n";
+            std::cout << m->refractionVals[start_ind][0] << " " << m->refractionVals[start_ind][1] << " " << m->refractionVals[start_ind][2] << " " << m->refractionVals[start_ind][3] << "\n";
+
+            hm[mat.name] = 6;//start_ind;
+            start_ind++;
+        }
+    }
+}
+
 // only to be used in createBVH
-bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3], verticies* v, indicies* inds){
+bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3], verticies* v, indicies* inds, std::unordered_map<std::string, int> &mats_map){
     std::fstream file;
     std::vector<std::string> lines;
     std::string line;
@@ -2582,13 +2697,23 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3], verticies* v, ind
     std::cout << numVerts << " num of verts in model\n";
     std::cout << numFaces << " num of faces in model\n";
 
+
+    int use_material = 0;
+
+
+
     int currentNumVerts = 0;
     int currentNumFaces = 0;
     for (int i = 0; i < lines.size(); i++){
         if (lines[i].length() == 0){
             continue;
         }
-        if (lines[i][0] == 'v' && lines[i][1] == ' '){
+        else if (lines[i].substr(0,6) == "usemtl"){
+            if (mats_map.count(lines[i].substr(7))){
+                use_material = mats_map[lines[i].substr(7)];
+            }
+        }
+        else if (lines[i][0] == 'v' && lines[i][1] == ' '){
             bool started = false;
             std::string currentNum = "";
             int numNum = 0;
@@ -2615,8 +2740,7 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3], verticies* v, ind
 
             currentNumVerts++;
         }
-
-        if (lines[i][0] == 'f' && lines[i][1] == ' '){
+        else if (lines[i][0] == 'f' && lines[i][1] == ' '){
             bool recording = false;
             int indxNum = 0;
             std::string currentNum = "";
@@ -2649,7 +2773,7 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3], verticies* v, ind
                 inds->indx[currentNumFaces][0] = faceIndxs[0];
                 inds->indx[currentNumFaces][1] = faceIndxs[j];
                 inds->indx[currentNumFaces][2] = faceIndxs[j+1];
-                inds->indx[currentNumFaces][3] = 0;//i%6;
+                inds->indx[currentNumFaces][3] = use_material;//i%6;
                 
                 currentNumFaces++;
             }
@@ -2705,6 +2829,50 @@ void createBVH(uint32_t currentImage){
     // float 5-7: mins
     // float 9-11: maxes
 
+
+
+    materials *m = new materials;
+    for (int i = 0; i < 16; i++){
+        m->colAndR[i] = glm::vec4(1,0,0,0);
+        m->emmision[i] = glm::vec4(1,0,0,0);
+        m->refractionVals[i] = glm::vec4(1,0,0,0);
+    }
+
+    m->colAndR[0] = glm::vec4(0,1,1,0.8);// cyan glass
+    m->emmision[0] = glm::vec4(0,0,0,0);
+    m->refractionVals[0] = glm::vec4(1.3,0.9,0,0);
+
+    m->colAndR[1] = glm::vec4(1,1,1,4.8);// diffuse gray
+    m->emmision[1] = glm::vec4(0,0,0,0);
+    m->refractionVals[1] = glm::vec4(1.3,0,0,0);
+
+    m->colAndR[2] = glm::vec4(0,1,0,0.8);// green slight light
+    m->emmision[2] = glm::vec4(0.01,0.01,0.01,0);
+    m->refractionVals[2] = glm::vec4(1.3,0,0,0);
+
+    m->colAndR[3] = glm::vec4(1,1,1,0.8);// yellow light semi transparent
+    m->emmision[3] = glm::vec4(1,1,0.7,0);
+    m->refractionVals[3] = glm::vec4(1.3,0.5,0,0);
+
+    m->colAndR[4] = glm::vec4(1,0.5,0.5,0.0);// reflective redish brown
+    m->emmision[4] = glm::vec4(0,0,0,0);
+    m->refractionVals[4] = glm::vec4(1.3,0,0,0);
+
+    m->colAndR[5] = glm::vec4(0,0,0,0.0);// light
+    m->emmision[5] = glm::vec4(2,2,2,0);
+    m->refractionVals[5] = glm::vec4(1.3,0,0,0);
+
+
+    std::unordered_map<std::string, int> material_hash;
+    loadMTL(material_hash, m, 6);
+
+
+    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*4 +currentImage], m, sizeof(*m));
+
+
+
+
+
     std::vector<glm::vec4> mins;
     std::vector<glm::vec4> maxes;
 
@@ -2722,9 +2890,6 @@ void createBVH(uint32_t currentImage){
     // add a light ??
     s->dims[4] = glm::vec4(0,6,5,3);
     s->mats[1].x = 5;
-
-
-
 
 
     mins.push_back(glm::vec4(65536,65536,65536,0));
@@ -2759,10 +2924,11 @@ void createBVH(uint32_t currentImage){
     }
 
     //auto file_name = "space_ship_model.obj";
-    auto file_name = "suzanne.obj";
+    //uto file_name = "suzanne.obj";
     //auto file_name = "teapot.obj";
     //auto file_name = "stanford-bunny.obj";
-    if (!loadObjToBVH(file_name,retModelVecs, v, inds)){
+    auto file_name = "raytracing_model.obj";
+    if (!loadObjToBVH(file_name,retModelVecs, v, inds, material_hash)){
         throw std::runtime_error("cant load model");
     }
 
@@ -2840,49 +3006,15 @@ void updateUniformBuffer(uint32_t currentImage){
 
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT +currentImage], &v2, sizeof(v2));
 
-    float angle = 0.01*frame;
+    float angle = 0.0001*frame;
     computeState state;
     float fov = 1.;
-    state.pos = glm::vec3(sin(angle)*15,1,-cos(angle)*15.0);
-    state.angles = glm::vec2(0.0,angle);
+    state.pos = glm::vec3(sin(angle)*50,-20,-cos(angle)*50.0);
+    state.angles = glm::vec2(0.4,angle);
     state.screenExtent = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
     state.x = glm::ivec1(frame);
     state.numRootBVs = glm::ivec1(numRootBVs);
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*2 +currentImage], &state, sizeof(state));
-
-    materials m;
-    for (int i = 0; i < 16; i++){
-        m.colAndR[i] = glm::vec4(1,0,0,0);
-        m.emmision[i] = glm::vec4(1,0,0,0);
-        m.refractionVals[i] = glm::vec4(1,0,0,0);
-    }
-
-    m.colAndR[0] = glm::vec4(0,1,1,0.8);// cyan glass
-    m.emmision[0] = glm::vec4(0,0,0,0);
-    m.refractionVals[0] = glm::vec4(1.3,0.9,0,0);
-
-    m.colAndR[1] = glm::vec4(1,1,1,4.8);// diffuse gray
-    m.emmision[1] = glm::vec4(0,0,0,0);
-    m.refractionVals[1] = glm::vec4(1.3,0,0,0);
-
-    m.colAndR[2] = glm::vec4(0,1,0,0.8);// green slight light
-    m.emmision[2] = glm::vec4(0.01,0.01,0.01,0);
-    m.refractionVals[2] = glm::vec4(1.3,0,0,0);
-
-    m.colAndR[3] = glm::vec4(1,1,1,0.8);// yellow light semi transparent
-    m.emmision[3] = glm::vec4(1,1,0.7,0);
-    m.refractionVals[3] = glm::vec4(1.3,0.5,0,0);
-
-    m.colAndR[4] = glm::vec4(1,0.5,0.5,0.0);// reflective redish brown
-    m.emmision[4] = glm::vec4(0,0,0,0);
-    m.refractionVals[4] = glm::vec4(1.3,0,0,0);
-
-    m.colAndR[5] = glm::vec4(0,0,0,0.0);// light
-    m.emmision[5] = glm::vec4(2,2,2,0);
-    m.refractionVals[5] = glm::vec4(1.3,0,0,0);
-
-    memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT*4 +currentImage], &m, sizeof(m));
-
     
     if (mainBvhNeedGenerating){
         createBVH(currentImage);
