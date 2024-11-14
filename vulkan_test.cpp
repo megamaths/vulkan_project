@@ -136,7 +136,9 @@ struct sphere {
     alignas(16) glm::vec4 dim;
 };
 
-const int spheresSize = 16;
+
+// need to set size in shader
+const int spheresSize = 1024;
 struct spheres {
     alignas(16) glm::vec4 dims[spheresSize];
     alignas(16) glm::ivec4 mats[spheresSize/4];
@@ -2561,8 +2563,6 @@ struct MaterialReturn{
     glm::vec3 optical_density;// only use first
 };
 
-
-
 std::vector<MaterialReturn> parseMTL(std::vector<std::string> lines){
     std::vector<MaterialReturn> retval;
 
@@ -2652,14 +2652,14 @@ void loadMTL(std::unordered_map<std::string, int> &hm, materials* m, int start_i
         for (auto mat : mats){
 
             m->colAndR[start_ind] = glm::vec4(mat.diffuse,mat.roughness[0]);
-            m->emmision[start_ind] = glm::vec4(mat.emissive,0.0);
+            m->emmision[start_ind] = glm::vec4(mat.emissive,mat.metallic[0]);
             m->refractionVals[start_ind] = glm::vec4(mat.optical_density[0], 1.0-mat.dissolve[0], 0.0, 0.0);
 
             std::cout << m->colAndR[start_ind][0] << " " << m->colAndR[start_ind][1] << " " << m->colAndR[start_ind][2] << " " << m->colAndR[start_ind][3] << "\n";
             std::cout << m->emmision[start_ind][0] << " " << m->emmision[start_ind][1] << " " << m->emmision[start_ind][2] << " " << m->emmision[start_ind][3] << "\n";
             std::cout << m->refractionVals[start_ind][0] << " " << m->refractionVals[start_ind][1] << " " << m->refractionVals[start_ind][2] << " " << m->refractionVals[start_ind][3] << "\n";
 
-            hm[mat.name] = 6;//start_ind;
+            hm[mat.name] = start_ind;
             start_ind++;
         }
     }
@@ -2788,13 +2788,6 @@ bool loadObjToBVH(std::string filePath, glm::vec4 (&retBV)[3], verticies* v, ind
 
     for (int i = 0; i < numVerts; i++){// calc mins and maxes
         for (int j = 0; j < 3; j++){
-            v->verts[i][j] *= 1.0;
-            if (j == 1){
-                v->verts[i][j] += 3.0;
-            }
-            if (j == 2){
-                v->verts[i][j] *= 1.0;
-            }
             if (v->verts[i][j] < retBV[1][j]){
                 retBV[1][j] = v->verts[i][j];
             }
@@ -2879,22 +2872,30 @@ void createBVH(uint32_t currentImage){
 
     spheres* s = new spheres;
 
-    for (int i = 0; i < 16; i++){// a bunch of spheres
-        s->dims[i] = glm::vec4(2.5+ (i%4)*2/3.0, ((i/4)%2) -0.5,i/8 -0.5,0.25);
+    for (int i = 0; i < 64; i++){
+        for (int j = 0; j < 4; j++){
+            s->dims[i][j] = 0.0;
+        }
     }
 
-    for (int i = 0; i < 4; i++){// mat inds for spheres
-        s->mats[i] = glm::vec4((i*4)%6,(i*4+1)%6,(i*4+2)%6,(i*4+3)%6);
+    int num_spheres = 0;
+    for (int i = 0; i < 12; i++){// a bunch of spheres
+        for (int j = 0; j <= i; j++){
+            for (int k = 0; k <= i; k++){
+                s->dims[num_spheres] = glm::vec4(float(j)*0.25 + (11-i)*0.125 + 9, -1.47 + float(i)*0.25*sqrt(2.0)/2.0 , float(k)*0.25 + (11-i)*0.125  +7,0.125);
+                std::cout << s->dims[num_spheres][0] << " " << s->dims[num_spheres][2] << "\n";
+                num_spheres++;
+            }
+        }
     }
 
-    // add a light ??
-    s->dims[4] = glm::vec4(0,6,5,3);
-    s->mats[1].x = 5;
-
+    for (int i = 0; i < spheresSize/4; i++){// mat inds for spheres
+        s->mats[i] = glm::vec4(rand()%6, rand()%6, rand()%6, rand()%6);//glm::vec4((i*4)%6,(i*4+1)%6,(i*4+2)%6,(i*4+3)%6);
+    }
 
     mins.push_back(glm::vec4(65536,65536,65536,0));
     maxes.push_back(glm::vec4(-65536,-65536,-65536,0));
-    for (int i = 0; i < 16; i++){
+    for (int i = 0; i < num_spheres; i++){
         for (int j = 0; j < 3; j++){
             if (s->dims[i][j]-s->dims[i][3] < mins[0][j]){
                 mins[0][j] = s->dims[i][j]-s->dims[i][3];
@@ -2959,7 +2960,7 @@ void createBVH(uint32_t currentImage){
     mainBvhDM.bvhData.data[1] = totalmins;
     mainBvhDM.bvhData.data[2] = totalmaxes;
 
-    mainBvhDM.bvhData.data[3] = glm::vec4(0,16,1,2); // start at 0 , 16 items , 1 vec4 stride, type is sphere
+    mainBvhDM.bvhData.data[3] = glm::vec4(0,num_spheres,1,2); // start at 0 , num_spheres items , 1 vec4 stride, type is sphere
     mainBvhDM.bvhData.data[4] = mins[0];
     mainBvhDM.bvhData.data[5] = maxes[0];
 
@@ -2984,9 +2985,12 @@ void createBVH(uint32_t currentImage){
     /*for (int i = 0; i < indsSize; i++){
         std::cout << i << "; " << inds->indx[i][0] << " " << inds->indx[i][1] << " " << inds->indx[i][2] << " " << inds->indx[i][3] << "\n";
     }*/
-    /*for (int i = 0; i < spheresSize; i++){
+    for (int i = 0; i < 10; i++){
         std::cout << i << "; " << s->dims[i][0] << " " << s->dims[i][1] << " " << s->dims[i][2] << " " << s->dims[i][3] << "\n";
-    }*/
+    }
+    for (int i = 0; i < spheresSize/4; i++){
+        std::cout << i << "; " << s->mats[i][0] << " " << s->mats[i][1] << " " << s->mats[i][2] << " " << s->mats[i][3] << "\n";
+    }
     /*for (int i = 0; i < 512; i++){
         std::cout << i << "; " << mainBvhDM.bvhData.data[i][0] << " " << mainBvhDM.bvhData.data[i][1] << " " << mainBvhDM.bvhData.data[i][2] << " " << mainBvhDM.bvhData.data[i][3] << "\n";
     }*/
@@ -3006,11 +3010,11 @@ void updateUniformBuffer(uint32_t currentImage){
 
     memcpy(uniformBuffersMapped[MAX_FRAMES_IN_FLIGHT +currentImage], &v2, sizeof(v2));
 
-    float angle = 0.0001*frame;
+    //float angle = 0.00001*frame + 3.14;
     computeState state;
     float fov = 1.;
-    state.pos = glm::vec3(sin(angle)*50,-20,-cos(angle)*50.0);
-    state.angles = glm::vec2(0.4,angle);
+    state.pos = glm::vec3(-12.3,-3.5, 5);//glm::vec3(sin(angle)*50,-30,-cos(angle)*50.0);//
+    state.angles = glm::vec2(0.15, -1.84);//glm::vec2(0.5,angle);//
     state.screenExtent = glm::vec2(fov,fov/swapChainExtent.width*swapChainExtent.height);
     state.x = glm::ivec1(frame);
     state.numRootBVs = glm::ivec1(numRootBVs);

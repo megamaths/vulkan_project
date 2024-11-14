@@ -11,13 +11,6 @@ struct triangle{
     vec3 v3;
 };
 
-struct material{
-    vec3 col;
-    vec3 emmision;
-    float roughness;
-};
-
-
 layout (binding = 0, rgba16) uniform writeonly image2D outputImage;
 
 layout (binding = 1, rgba16) uniform readonly image2D lastOutputImage;
@@ -32,15 +25,15 @@ layout (binding = 2) uniform computeState{
 
 layout(binding = 3) uniform spheres{
     //xyz is center w is radius
-    vec4 dim[16];
+    vec4 dim[1024];
     // material index
-    ivec4 mat[4];
+    ivec4 mat[256];
 } s;
 
 layout(binding = 4) uniform materials{
     //xyz is colour w is roughness
     vec4 colAndR[16];
-    // xyz is emmision w is not used
+    // xyz is emmision w metalisity
     vec4 emmision[16];
     // x n val , y chance zw not used
     vec4 refractionVals[16];
@@ -60,6 +53,20 @@ layout(binding = 7) readonly buffer bvh{
     // a large block of data
     vec4 data[];
 } bvhData;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 struct ray{
     vec3 dir;
@@ -320,25 +327,26 @@ ray traceRay(ray mainRay){
         }
         max_i = i;
     }
-    retRay.colour += vec3(float(max_i)/500.0);
-    if (max_i > 500){
+    /*retRay.colour += vec3(float(max_i)/100.0);
+    if (max_i > 100){
         retRay.colour = vec3(1.0,0.0,0.0);
-    }
+    }*/
 
 
     if (dist > 65535){ // miss
-        retRay.colour += retRay.absorbsion*vec3(0.0,0.0,0.0);// adds the voids colour
+        retRay.colour += retRay.absorbsion*vec3(0.3,0.4,0.5);// adds the voids colour
         retRay.absorbsion = vec3(0.0);
         return retRay;// ?? as absorbsion is 0 should not try to reflect of the void
     }
 
+    float metalisity = m.emmision[materialIndex].w;
     float roughness = m.colAndR[materialIndex].w;
     vec3 newCol = m.colAndR[materialIndex].xyz;
     vec3 emmision = m.emmision[materialIndex].xyz;
     retRay.mediumN = m.refractionVals[materialIndex].x;
     float refractChance = m.refractionVals[materialIndex].y;
 
-    if (abs(randVal())/256%16 == 0){//specular reflection
+    if (abs(randVal())%1024/1024.0 <= metalisity){//specular reflection
         roughness = 0;
     }
 
@@ -368,8 +376,12 @@ ray traceRay(ray mainRay){
         retRay.mediumN = mainRay.mediumN;
         nDotR = abs(dot(normal,retRay.dir));
     }
-    else{
+    else{// refract
         retRay.dir = normalize(refractRay - randDir*0.01);
+        if (dot(mainRay.dir,normal) > 0){// leaving object
+            // dont reapply colour
+            newCol = vec3(1.0);
+        }
     }
 
 
